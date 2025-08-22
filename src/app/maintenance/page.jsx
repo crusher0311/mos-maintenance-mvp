@@ -204,6 +204,36 @@ function AdvisorReport({ data, currentMiles }) {
   );
 }
 
+function Timeline({ vin }) {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch(`/api/timeline/${vin}?limit=20`, { cache: "no-store" });
+      const data = await res.json();
+      setEvents(data.events || []);
+    })();
+  }, [vin]);
+
+  return (
+    <div className="p-6 space-y-3">
+      <h3 className="text-lg font-bold">🗓️ Service Timeline</h3>
+      <ul className="space-y-2">
+        {events.map((e, i) => (
+          <li key={i} className="text-sm border rounded-lg p-3">
+            <div className="font-semibold">{e.type}</div>
+            <div className="text-gray-700">
+              {new Date(e.date).toLocaleString()} · {e.mileage ? `${e.mileage.toLocaleString()} mi` : "no mileage"}
+              {e.visitId ? ` · Visit: ${e.visitId}` : ""}
+            </div>
+          </li>
+        ))}
+        {events.length === 0 && <li className="text-sm text-gray-500">No events yet.</li>}
+      </ul>
+    </div>
+  );
+}
+
 // ------------------ SHELL COMPONENT ------------------
 export default function MOSMaintenanceMVP() {
   const [currentMiles] = useState(103265);
@@ -229,6 +259,7 @@ export default function MOSMaintenanceMVP() {
       {view === "advisor"
         ? <AdvisorReport data={data} currentMiles={currentMiles} />
         : <CustomerReport data={data} currentMiles={currentMiles} />}
+	<Timeline vin={"1FT8W3BT0BEA08647"} />
     </div>
   );
 }
