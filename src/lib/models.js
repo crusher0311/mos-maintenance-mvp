@@ -62,3 +62,28 @@ export const InspectionFinding =
 
 export const WebhookLog =
   mongoose.models.WebhookLog || mongoose.model("WebhookLog", WebhookLogSchema);
+
+/* ------------------- ServiceEvent ------------------ */
+/**
+ * A normalized “timeline” entry per VIN.
+ * Example types:
+ * - "visit_opened" | "visit_closed" | "chat_update"
+ * - "dvi_completed" | "odo_update" | "estimate_created"
+ * - "oil_change" | "fuel_filter" | ... (later, inferred from ROs)
+ */
+const ServiceEventSchema = new Schema(
+  {
+    vin:      { type: String, required: true, index: true },
+    type:     { type: String, required: true },       // event type
+    date:     { type: Date,   required: true },
+    mileage:  { type: Number },                       // optional
+    visitId:  { type: String },                       // RO#/ticket ID
+    source:   { type: String, default: "autoflow" },
+    payload:  { type: Object },                       // trimmed payload
+  },
+  { timestamps: true }
+);
+
+export const ServiceEvent =
+  mongoose.models.ServiceEvent || mongoose.model("ServiceEvent", ServiceEventSchema);
+
