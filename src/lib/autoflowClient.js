@@ -1,5 +1,5 @@
-﻿// src/lib/autoflowClient.js
-import { readConfig } from "@/lib/config";
+// src/lib/autoflowClient.js
+import { readConfig } from "./config";
 
 /**
  * Build Authorization headers for Autoflow.
@@ -31,4 +31,5 @@ export function buildAutoflowHeaders() {
 
 // Note: We intentionally do NOT export any fetch* functions here.
 // Autoflow /api/v1/history/ is for pushing data TO Autoflow, not reading from it.
-// We’ll rely on webhooks (ingest) and Carfax (read) for MVP.
+// We�ll rely on webhooks (ingest) and Carfax (read) for MVP.
+
