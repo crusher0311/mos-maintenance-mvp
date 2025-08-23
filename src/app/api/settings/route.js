@@ -1,13 +1,12 @@
-// src/app/api/settings/route.js
 import { readConfig, writeConfig } from "@/lib/config";
 
 export async function GET() {
   const cfg = readConfig();
-  // Do not leak secrets in plain GET if you later expose publicly.
   return Response.json({
     autoflowBaseUrl: cfg.autoflowBaseUrl || "",
-    // mask the key in GET for safety
+    autoflowApiHeader: cfg.autoflowApiHeader || "X-API-KEY",
     autoflowApiKey: cfg.autoflowApiKey ? "*****" : "",
+    autoflowApiPassword: cfg.autoflowApiPassword ? "*****" : "",
     autoflowWebhookToken: cfg.autoflowWebhookToken ? "*****" : "",
   });
 }
@@ -15,11 +14,12 @@ export async function GET() {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { autoflowBaseUrl, autoflowApiKey, autoflowWebhookToken } = body || {};
     const saved = writeConfig({
-      ...(autoflowBaseUrl !== undefined ? { autoflowBaseUrl } : {}),
-      ...(autoflowApiKey !== undefined ? { autoflowApiKey } : {}),
-      ...(autoflowWebhookToken !== undefined ? { autoflowWebhookToken } : {}),
+      ...(body.autoflowBaseUrl !== undefined ? { autoflowBaseUrl: body.autoflowBaseUrl } : {}),
+      ...(body.autoflowApiHeader !== undefined ? { autoflowApiHeader: body.autoflowApiHeader } : {}),
+      ...(body.autoflowApiKey !== undefined ? { autoflowApiKey: body.autoflowApiKey } : {}),
+      ...(body.autoflowApiPassword !== undefined ? { autoflowApiPassword: body.autoflowApiPassword } : {}),
+      ...(body.autoflowWebhookToken !== undefined ? { autoflowWebhookToken: body.autoflowWebhookToken } : {}),
     });
     return Response.json({ ok: true });
   } catch (e) {

@@ -1,4 +1,4 @@
-// src/app/api/recs/[vin]/route.js
+﻿// src/app/api/recs/[vin]/route.js
 import { dbConnect } from "@/lib/db";
 import { OdometerPoint, InspectionFinding } from "@/lib/models";
 
@@ -16,8 +16,8 @@ function etaByMiles(current, target, mpd) {
   return d.toLocaleDateString();
 }
 
-export async function GET(req, { params }) {
-  const { vin } = params;
+export async function GET(req, context) {
+  const { vin } = await context.params;
   const url = new URL(req.url);
   const currentMiles = Number(url.searchParams.get("mileage") || 103265);
 
@@ -61,11 +61,11 @@ export async function GET(req, { params }) {
   };
 
   const items = [
-    { icon: "🛢️", title: "Oil & Filter",        dueMi: lastOilMiles    + schedule.oil_interval_mi,        risk: risks.oil },
-    { icon: "⛽",  title: "Fuel Filter",         dueMi: lastFuelMiles   + schedule.fuel_filter_interval_mi, risk: risks.fuel },
-    { icon: "🌬️", title: "Air Filter",          dueMi: lastAirMiles    + schedule.air_filter_interval_mi,  risk: risks.air },
-    { icon: "⚙️",  title: "Transmission Fluid",  dueMi: lastTransMiles  + schedule.trans_interval_mi,       risk: risks.trans },
-    { icon: "❄️",  title: "Coolant",             dueMi: lastCoolantMiles + schedule.coolant_interval_mi,    risk: risks.coolant },
+    { icon: "ðŸ›¢ï¸", title: "Oil & Filter",        dueMi: lastOilMiles    + schedule.oil_interval_mi,        risk: risks.oil },
+    { icon: "â›½",  title: "Fuel Filter",         dueMi: lastFuelMiles   + schedule.fuel_filter_interval_mi, risk: risks.fuel },
+    { icon: "ðŸŒ¬ï¸", title: "Air Filter",          dueMi: lastAirMiles    + schedule.air_filter_interval_mi,  risk: risks.air },
+    { icon: "âš™ï¸",  title: "Transmission Fluid",  dueMi: lastTransMiles  + schedule.trans_interval_mi,       risk: risks.trans },
+    { icon: "â„ï¸",  title: "Coolant",             dueMi: lastCoolantMiles + schedule.coolant_interval_mi,    risk: risks.coolant },
   ];
 
   const recs = items
@@ -94,3 +94,4 @@ export async function GET(req, { params }) {
 
   return Response.json({ mpd, recs, flags, vin });
 }
+

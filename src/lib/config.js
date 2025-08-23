@@ -1,6 +1,4 @@
 // src/lib/config.js
-// Dev-friendly config store that prefers a local JSON file, with env fallbacks.
-// NEVER commit config.json (it's gitignored by default via Next.js .gitignore)
 import fs from "fs";
 import path from "path";
 
@@ -12,15 +10,19 @@ export function readConfig() {
       const raw = fs.readFileSync(CONFIG_PATH, "utf8");
       const cfg = JSON.parse(raw || "{}");
       return {
-        autoflowBaseUrl: process.env.AUTOFLOW_BASE_URL || cfg.autoflowBaseUrl || "",
-        autoflowApiKey: process.env.AUTOFLOW_API_KEY || cfg.autoflowApiKey || "",
-        autoflowWebhookToken: process.env.AUTOFLOW_WEBHOOK_TOKEN || cfg.autoflowWebhookToken || "",
+        autoflowBaseUrl:       process.env.AUTOFLOW_BASE_URL       || cfg.autoflowBaseUrl       || "",
+        autoflowApiKey:        process.env.AUTOFLOW_API_KEY        || cfg.autoflowApiKey        || "",
+        autoflowApiPassword:   process.env.AUTOFLOW_API_PASSWORD   || cfg.autoflowApiPassword   || "",
+        autoflowApiHeader:     process.env.AUTOFLOW_API_HEADER     || cfg.autoflowApiHeader     || "X-API-KEY",
+        autoflowWebhookToken:  process.env.AUTOFLOW_WEBHOOK_TOKEN  || cfg.autoflowWebhookToken  || "",
       };
     }
   } catch {}
   return {
-    autoflowBaseUrl: process.env.AUTOFLOW_BASE_URL || "",
-    autoflowApiKey: process.env.AUTOFLOW_API_KEY || "",
+    autoflowBaseUrl:      process.env.AUTOFLOW_BASE_URL      || "",
+    autoflowApiKey:       process.env.AUTOFLOW_API_KEY       || "",
+    autoflowApiPassword:  process.env.AUTOFLOW_API_PASSWORD  || "",
+    autoflowApiHeader:    process.env.AUTOFLOW_API_HEADER    || "X-API-KEY",
     autoflowWebhookToken: process.env.AUTOFLOW_WEBHOOK_TOKEN || "",
   };
 }

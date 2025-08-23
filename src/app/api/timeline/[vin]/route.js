@@ -1,10 +1,10 @@
-// src/app/api/timeline/[vin]/route.js
+﻿// src/app/api/timeline/[vin]/route.js
 import { dbConnect } from "@/lib/db";
 import { ServiceEvent } from "@/lib/models";
 
-export async function GET(req, { params }) {
+export async function GET(req, context) {
+  const { vin } = await context.params;
   await dbConnect();
-  const { vin } = params;
   const url = new URL(req.url);
   const limit = Math.min(Number(url.searchParams.get("limit") || 50), 200);
 
@@ -29,3 +29,4 @@ export async function GET(req, { params }) {
 
   return Response.json({ vin, count: out.length, events: out });
 }
+
