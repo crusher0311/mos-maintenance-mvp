@@ -162,10 +162,11 @@ function collectFromCandidate(
 
 function normalizeAnalyze(raw: any): AnalyzeResponse {
   const vehicle = {
-    vin: raw?.vin,
-    make: raw?.make,
-    model: raw?.model,
-    year: raw?.year,
+    vin: raw?.vin ?? raw?.vehicle?.vin,
+    make: raw?.make ?? raw?.vehicle?.make,
+    model: raw?.model ?? raw?.vehicle?.model,
+    year: raw?.year ?? raw?.vehicle?.year,
+    trim: raw?.trim ?? raw?.vehicle?.trim,
   };
   const avg = raw?.miles_per_day_used ?? raw?.avgMilesPerDay;
 
@@ -221,10 +222,12 @@ export default function MaintenancePage({
       try {
         setLoading(true);
         setErr(null);
-        const r = await fetch(`/api/maintenance/analyze/${vin}?r=${Date.now()}`, {
+        // Use the store-on-read route so viewing the page persists analysis to Mongo
+        const r = await fetch(`/api/maintenance/analyze-store/${vin}?r=${Date.now()}`, {
           method: "POST",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
         });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const raw = await r.json();
@@ -242,7 +245,7 @@ export default function MaintenancePage({
   const vehicleTitle = useMemo(() => {
     const v = data?.vehicle;
     if (!v) return vin;
-    return `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""}`.replace(/\s+/g, " ").trim();
+    return `${v.year ?? ""} ${v.make ?? ""} ${v.model ?? ""} ${v.trim ?? ""}`.replace(/\s+/g, " ").trim() || vin;
   }, [data, vin]);
 
   const overdue = data?.overdue ?? [];
@@ -405,7 +408,7 @@ export default function MaintenancePage({
         </div>
 
         <p className="mt-6 text-center text-xs text-[--color-muted]">
-          This page POSTs to <code>/api/maintenance/analyze/{vin}</code> with <code>cache: &quot;no-store&quot;</code>.
+          This page POSTs to <code>/api/maintenance/analyze-store/{vin}</code> with <code>cache: &quot;no-store&quot;</code>.
         </p>
       </div>
     </main>
