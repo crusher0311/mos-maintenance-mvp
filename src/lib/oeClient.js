@@ -114,5 +114,12 @@ function normalizeOePayload(vin, raw) {
 function stubOe(vin) {
   const raw = {
     stub: true,
+    vin,
     maintenance: [
-      { code
+      { code: "OIL_CHANGE", name: "Oil & Filter Change", status: "overdue" },
+      { code: "TIRE_ROTATION", name: "Tire Rotation", status: "soon" },
+      { code: "CABIN_AIR_FILTER", name: "Cabin Air Filter", status: "not_yet" },
+    ],
+  };
+  return raw;
+}
