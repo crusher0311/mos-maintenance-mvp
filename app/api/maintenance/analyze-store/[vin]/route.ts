@@ -42,8 +42,12 @@ function countsFromAnalyze(raw: any) {
   return { overdue: buckets.overdue, comingSoon: buckets.soon, notYet: buckets.notYet };
 }
 
-export async function POST(req: NextRequest, { params }: { params: { vin: string } }) {
-  const vin = decodeURIComponent(params.vin);
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ vin: string }> }   // <-- params is a Promise in Next.js 15
+) {
+  const { vin: vinParam } = await params;             // <-- await it
+  const vin = decodeURIComponent(vinParam);
   const origin = new URL(req.url).origin;
 
   // Try to forward caller body; if none, use {}
@@ -51,12 +55,15 @@ export async function POST(req: NextRequest, { params }: { params: { vin: string
   try { body = await req.json(); } catch {}
 
   // 1) Call your existing analyzer route
-  const res = await fetch(`${origin}/api/maintenance/analyze/${encodeURIComponent(vin)}?r=${Date.now()}`, {
-    method: "POST",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
+  const res = await fetch(
+    `${origin}/api/maintenance/analyze/${encodeURIComponent(vin)}?r=${Date.now()}`,
+    {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    }
+  );
 
   if (!res.ok) {
     return new Response(await res.text(), { status: res.status });

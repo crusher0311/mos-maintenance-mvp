@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
-/* ---------------- Types ---------------- */
+/* ---------- Types mirrored from /api/dashboard ---------- */
 type Counts = { overdue: number; comingSoon: number; notYet: number };
 
 type Row = {
@@ -14,126 +14,37 @@ type Row = {
   updated?: string | null;
 };
 
-type DashboardData = {
+type DashboardPayload = {
   rows: Row[];
   totals: Counts;
   __debug?: Record<string, any>;
 };
 
-/* ---------------- Helpers ---------------- */
-const z = (n: any) => (Number.isFinite(+n) ? +n : 0);
+/* ---------- Utils ---------- */
+const AUTO_REFRESH_MS = 30_000;
 
-function coerceCounts(r: any): Counts {
-  // direct counts object?
-  const c =
-    r?.counts ??
-    r?.count ??
-    r?.summary ??
-    r;
-
-  // 1) explicit object keys
-  const mapObj = (o: any): Counts => ({
-    overdue:
-      z(o?.overdue) ||
-      z(o?.overdue_count) ||
-      z(o?.past_due) ||
-      z(o?.pastDue),
-    comingSoon:
-      z(o?.comingSoon) ||
-      z(o?.coming_soon) ||
-      z(o?.dueSoon) ||
-      z(o?.due_soon) ||
-      z(o?.soon),
-    notYet:
-      z(o?.notYet) ||
-      z(o?.not_yet) ||
-      z(o?.future) ||
-      z(o?.ok),
-  });
-
-  if (c && typeof c === "object" && !Array.isArray(c)) {
-    const m = mapObj(c);
-    if (m.overdue || m.comingSoon || m.notYet) return m;
-  }
-
-  // 2) pull from row-level number fields
-  const m2 = mapObj(r ?? {});
-  if (m2.overdue || m2.comingSoon || m2.notYet) return m2;
-
-  // 3) parse summary string like: "overdue: 5due: 0coming soon: 15not yet: 14"
-  const s = String(c ?? r?.summary ?? r ?? "");
-  const rx = (label: string) =>
-    (s.match(new RegExp(`${label}\\s*:\\s*(\\d+)`, "i")) || [])[1];
-
-  const parsed: Counts = {
-    overdue: z(rx("overdue|past[_ ]?due")),
-    comingSoon: z(rx("(coming[_ ]?soon|due[_ ]?soon|soon)")),
-    notYet: z(rx("(not[_ ]?yet|future)")),
-  };
-  if (parsed.overdue || parsed.comingSoon || parsed.notYet) return parsed;
-
-  return { overdue: 0, comingSoon: 0, notYet: 0 };
-}
-
-function vehicleTitleFrom(r: any): string {
-  const t =
-    r?.vehicleTitle ||
-    r?.vehicle ||
-    r?.name ||
-    `${r?.year ?? ""} ${r?.make ?? ""} ${r?.model ?? ""} ${r?.trim ?? ""}`;
-  return String(t).replace(/\s+/g, " ").trim();
-}
-
-function normalizeDashboard(raw: any): DashboardData {
-  const arr: any[] = Array.isArray(raw)
-    ? raw
-    : Array.isArray(raw?.rows)
-    ? raw.rows
-    : Array.isArray(raw?.items)
-    ? raw.items
-    : [];
-
-  const rows: Row[] = arr.map((r) => ({
-    vin: String(r?.vin ?? r?.VIN ?? "").trim(),
-    vehicleTitle: vehicleTitleFrom(r),
-    shop: r?.shop ?? r?.shop_name ?? null,
-    counts: coerceCounts(r),
-    updated: r?.updated ?? r?.updated_at ?? r?.timestamp ?? null,
-  }));
-
-  const totals = rows.reduce(
-    (acc, r) => {
-      acc.overdue += r.counts.overdue;
-      acc.comingSoon += r.counts.comingSoon;
-      acc.notYet += r.counts.notYet;
-      return acc;
-    },
-    { overdue: 0, comingSoon: 0, notYet: 0 } as Counts
-  );
-
-  return {
-    rows,
-    totals,
-    __debug: {
-      topLevelKeys: Object.keys(raw ?? {}),
-      sampleRowKeys: rows[0] ? Object.keys(arr[0] ?? {}) : null,
-      rowCount: rows.length,
-    },
-  };
+function fmtRelative(ts?: string | null) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  const diff = Date.now() - d.getTime();
+  const sec = Math.floor(diff / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  if (sec < 45) return `${sec}s ago`;
+  if (min < 90) return `${min}m ago`;
+  if (hr < 36) return `${hr}h ago`;
+  return d.toLocaleString();
 }
 
 function Badge({
-  tone = "muted",
   children,
-}: {
-  tone?: "muted" | "red" | "yellow" | "blue";
-  children: React.ReactNode;
+  tone = "muted" as "muted" | "red" | "yellow" | "green",
 }) {
   const map = {
     muted: "bg-[#0e1622] text-[--color-muted] border-line",
     red: "bg-[#2a1010] text-[--color-bad] border-[--color-bad]/40",
     yellow: "bg-[#2b260e] text-[--color-soon] border-[--color-soon]/40",
-    blue: "bg-[#0e1a2b] text-[--color-accent] border-[--color-accent]/40",
+    green: "bg-[#0f1f14] text-[--color-good] border-[--color-good]/40",
   } as const;
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${map[tone]}`}>
@@ -142,163 +53,134 @@ function Badge({
   );
 }
 
-/* ---------------- Page ---------------- */
+/* ---------- Page ---------- */
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [data, setData] = useState<DashboardPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-  const [showDebug, setShowDebug] = useState(false);
+  const [lastFetch, setLastFetch] = useState<number | null>(null);
+
+  const fetchData = async () => {
+    try {
+      setErr(null);
+      const res = await fetch("/api/dashboard", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload: DashboardPayload = await res.json();
+      setData(payload);
+      setLastFetch(Date.now());
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load dashboard");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        setErr(null);
-        const res = await fetch(`/api/dashboard?r=${Date.now()}`, {
-          cache: "no-store",
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const raw = await res.json();
-        setData(normalizeDashboard(raw));
-      } catch (e: any) {
-        setErr(e?.message || "Failed to load dashboard");
-      } finally {
-        setLoading(false);
-      }
-    })();
+    fetchData();
+    const id = setInterval(fetchData, AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filtered = useMemo(() => {
-    if (!data) return [];
-    const needle = q.trim().toLowerCase();
-    if (!needle) return data.rows;
-    return data.rows.filter(
-      (r) =>
-        r.vin.toLowerCase().includes(needle) ||
-        r.vehicleTitle.toLowerCase().includes(needle) ||
-        (r.shop ?? "").toLowerCase().includes(needle)
-    );
-  }, [data, q]);
+  const totals = useMemo<Counts>(
+    () =>
+      data?.totals ?? {
+        overdue: 0,
+        comingSoon: 0,
+        notYet: 0,
+      },
+    [data]
+  );
 
   return (
     <main className="min-h-screen bg-bg px-4 py-6 text-text">
       <div className="mx-auto w-full max-w-6xl">
-        {/* Header */}
-        <div className="rounded-xl border border-line bg-panel p-5 shadow-lg">
+        <header className="mb-4 rounded-xl border border-line bg-panel p-4 shadow">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold">Maintenance Dashboard</h1>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search VIN, vehicle, shop…"
-                className="rounded-md border border-line bg-[#0e1622] px-3 py-1 text-sm outline-none"
-              />
-              {process.env.NODE_ENV !== "production" && (
-                <button
-                  onClick={() => setShowDebug((s) => !s)}
-                  className="rounded-md border border-line bg-[#0e1622] px-2 py-1 text-sm"
-                >
-                  {showDebug ? "Hide" : "Show"} Debug
-                </button>
+            <h1 className="text-2xl font-semibold">Maintenance Dashboard</h1>
+            <div className="ml-auto flex items-center gap-2 text-xs text-[--color-muted]">
+              <span>Auto-refresh: {AUTO_REFRESH_MS / 1000}s</span>
+              {lastFetch && (
+                <span title={new Date(lastFetch).toLocaleString()}>
+                  Last update: {fmtRelative(new Date(lastFetch).toISOString())}
+                </span>
               )}
             </div>
           </div>
-
-          {/* KPIs */}
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-line bg-[#0e1622] p-3">
-              <div className="text-sm text-[--color-muted]">Overdue</div>
-              <div className="text-2xl font-semibold text-[--color-bad]">
-                {data?.totals.overdue ?? 0}
-              </div>
-            </div>
-            <div className="rounded-lg border border-line bg-[#0e1622] p-3">
-              <div className="text-sm text-[--color-muted]">Coming soon</div>
-              <div className="text-2xl font-semibold text-[--color-soon]">
-                {data?.totals.comingSoon ?? 0}
-              </div>
-            </div>
-            <div className="rounded-lg border border-line bg-[#0e1622] p-3">
-              <div className="text-sm text-[--color-muted]">Not yet</div>
-              <div className="text-2xl font-semibold">
-                {data?.totals.notYet ?? 0}
-              </div>
-            </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge tone="red">Overdue: <strong className="ml-1">{totals.overdue}</strong></Badge>
+            <Badge tone="yellow">Coming soon: <strong className="ml-1">{totals.comingSoon}</strong></Badge>
+            <Badge>Not yet: <strong className="ml-1">{totals.notYet}</strong></Badge>
           </div>
-
-          {showDebug && data?.__debug && (
-            <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-line bg-[#0e1622] p-3 text-xs text-[--color-muted]">
-{JSON.stringify(data.__debug, null, 2)}
-            </pre>
-          )}
-        </div>
-
-        {/* Table/List */}
-        <div className="mt-6 rounded-xl border border-line bg-panel">
-          <div className="grid grid-cols-[1.2fr_1fr_1fr_0.8fr_0.6fr] items-center gap-3 border-b border-line px-4 py-3 text-sm text-[--color-muted] max-sm:hidden">
-            <div>Vehicle</div>
-            <div>VIN</div>
-            <div>Shop</div>
-            <div>Counts</div>
-            <div>Updated</div>
-          </div>
-
-          {loading && (
-            <div className="px-4 py-6 text-[--color-muted]">Loading…</div>
-          )}
           {err && (
-            <div className="px-4 py-6 text-[--color-bad]">{err}</div>
+            <div className="mt-3 rounded-md border border-[--color-bad]/30 bg-[#2a1010]/40 px-3 py-2 text-[--color-bad]">
+              {err}
+            </div>
           )}
+        </header>
 
-          {!loading && !err && filtered.length === 0 && (
-            <div className="px-4 py-6 text-[--color-muted]">No rows.</div>
-          )}
+        <section className="rounded-xl border border-line bg-panel shadow">
+          <div className="grid grid-cols-12 border-b border-line px-3 py-2 text-sm text-[--color-muted]">
+            <div className="col-span-5">Vehicle</div>
+            <div className="col-span-2">VIN</div>
+            <div className="col-span-2">Shop</div>
+            <div className="col-span-2">Counts</div>
+            <div className="col-span-1 text-right">Updated</div>
+          </div>
 
+          {/* Rows */}
           <div className="divide-y divide-line">
-            {filtered.map((r) => (
-              <div
-                key={r.vin}
-                className="grid grid-cols-1 gap-3 px-4 py-3 sm:grid-cols-[1.2fr_1fr_1fr_0.8fr_auto]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{r.vehicleTitle || "(Vehicle)"}</div>
-                  <div className="mt-1 hidden text-xs text-[--color-muted] sm:block">
-                    <span className="mr-2">VIN:</span>
-                    <span className="font-mono">{r.vin}</span>
+            {loading && (
+              <div className="px-3 py-4 text-sm text-[--color-muted]">Loading…</div>
+            )}
+
+            {!loading && data?.rows?.length === 0 && (
+              <div className="px-3 py-4 text-sm text-[--color-muted]">
+                No rows yet. Visit a VIN page to persist the first analysis.
+              </div>
+            )}
+
+            {data?.rows?.map((row) => (
+              <div key={row.vin} className="grid grid-cols-12 items-center px-3 py-3">
+                <div className="col-span-5">
+                  <div className="font-medium leading-tight">{row.vehicleTitle}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-[--color-muted]">
+                    <Badge tone="red">Overdue: {row.counts.overdue}</Badge>
+                    <Badge tone="yellow">Soon: {row.counts.comingSoon}</Badge>
+                    <Badge>Not yet: {row.counts.notYet}</Badge>
+                    <Link
+                      href={`/vehicles/${row.vin}/maintenance`}
+                      className="ml-2 underline"
+                    >
+                      View
+                    </Link>
                   </div>
                 </div>
 
-                <div className="font-mono sm:hidden">{r.vin}</div>
-                <div className="truncate">{r.shop ?? "—"}</div>
+                <div className="col-span-2 truncate text-sm">{row.vin}</div>
+                <div className="col-span-2 text-sm">{row.shop ?? "—"}</div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="red">Overdue: {r.counts.overdue}</Badge>
-                  <Badge tone="yellow">Soon: {r.counts.comingSoon}</Badge>
-                  <Badge>Not yet: {r.counts.notYet}</Badge>
+                <div className="col-span-2">
+                  <div className="flex flex-wrap gap-1 text-xs">
+                    <Badge tone="red">{row.counts.overdue}</Badge>
+                    <Badge tone="yellow">{row.counts.comingSoon}</Badge>
+                    <Badge>{row.counts.notYet}</Badge>
+                  </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2">
-                  <div className="hidden text-xs text-[--color-muted] sm:block">
-                    {r.updated ? new Date(r.updated).toLocaleString() : "—"}
-                  </div>
-                  <Link
-                    href={`/vehicles/${encodeURIComponent(r.vin)}/maintenance`}
-                    className="rounded-md border border-[#1a3ea8] bg-gradient-to-b from-[#2b68ff] to-[#1f4dcc] px-3 py-1 text-sm"
-                  >
-                    View
-                  </Link>
+                <div className="col-span-1 text-right text-sm text-[--color-muted]">
+                  <span title={row.updated ? new Date(row.updated).toLocaleString() : ""}>
+                    {fmtRelative(row.updated)}
+                  </span>
                 </div>
               </div>
             ))}
           </div>
-        </div>
 
-        <p className="mt-6 text-center text-xs text-[--color-muted]">
-          Reading from <code>/api/dashboard</code>. Rows usually updated by your batch that hits{" "}
-          <code>/api/maintenance/analyze/&lt;vin&gt;</code>.
-        </p>
+          <div className="border-t border-line px-3 py-2 text-center text-xs text-[--color-muted]">
+            Reading from <code>/api/dashboard</code>. Rows update automatically.
+          </div>
+        </section>
       </div>
     </main>
   );

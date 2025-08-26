@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { getMongo } from "@/lib/mongo";
 
 /* ---------------- Types ---------------- */
 type Counts = { overdue: number; comingSoon: number; notYet: number };
@@ -17,12 +17,9 @@ type DashboardPayload = {
   __debug?: Record<string, any>;
 };
 
-/* ---------------- Analyze → counts normalizer ---------------- */
+/* ---------------- Analyze → counts normalizer (fallback) ---------------- */
 function bucketsFromAnalyze(raw: any) {
-  const root =
-    raw?.analysis?.maintenance_comparison ??
-    raw?.analysis ??
-    raw;
+  const root = raw?.analysis?.maintenance_comparison ?? raw?.analysis ?? raw;
 
   const buckets = { overdue: [] as any[], soon: [] as any[], notYet: [] as any[] };
   if (!root || typeof root !== "object") return buckets;
@@ -81,62 +78,61 @@ function countsFromAnalyze(raw: any): Counts {
   };
 }
 
-function vehicleTitleFrom(raw: any, vin: string) {
-  const t =
-    raw?.vehicleTitle ||
-    `${raw?.year ?? ""} ${raw?.make ?? ""} ${raw?.model ?? ""} ${raw?.trim ?? ""}`;
-  const cleaned = String(t).replace(/\s+/g, " ").trim();
-  return cleaned || vin;
-}
-
 /* ---------------- Route ---------------- */
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const origin = url.origin; // call our own server
+export async function GET() {
+  const client = await getMongo();
+  const db = client.db();
 
-  // VIN list: set in .env.local as NEXT_PUBLIC_DASHBOARD_VINS="VIN1,VIN2,..."
-  const vinsEnv =
-    process.env.NEXT_PUBLIC_DASHBOARD_VINS || process.env.DASHBOARD_VINS || "";
+  // Latest analysis doc per VIN, joined with vehicles for a proper title
+  const latest = await db
+    .collection("analyses")
+    .aggregate([
+      { $sort: { vin: 1, createdAt: -1 } },
+      {
+        $group: {
+          _id: "$vin",
+          vin: { $first: "$vin" },
+          counts: { $first: "$counts" },
+          raw: { $first: "$raw" },
+          createdAt: { $first: "$createdAt" },
+        },
+      },
+      {
+        $lookup: {
+          from: "vehicles",
+          localField: "vin",
+          foreignField: "vin",
+          as: "veh",
+        },
+      },
+      { $unwind: { path: "$veh", preserveNullAndEmptyArrays: true } },
+      { $sort: { vin: 1 } },
+    ])
+    .toArray();
 
-  const vins = vinsEnv
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rows: Row[] = latest.map((r: any) => {
+    const counts: Counts =
+      r?.counts && typeof r.counts === "object"
+        ? {
+            overdue: r.counts.overdue ?? 0,
+            comingSoon: r.counts.comingSoon ?? 0,
+            notYet: r.counts.notYet ?? 0,
+          }
+        : countsFromAnalyze(r?.raw);
 
-  // Fallback demo list (remove if you always set env)
-  if (vins.length === 0) {
-    vins.push("3FAHP0HG1BR342453", "JTDKB20U253109552");
-  }
+    const titleParts = [r?.veh?.year, r?.veh?.make, r?.veh?.model, r?.veh?.trim]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
 
-  const rows: Row[] = [];
-
-  for (const vin of vins) {
-    try {
-      const res = await fetch(
-        `${origin}/api/maintenance/analyze/${encodeURIComponent(vin)}?r=${Date.now()}`,
-        { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" } }
-      );
-      if (!res.ok) throw new Error(`analyze ${vin} → HTTP ${res.status}`);
-      const raw = await res.json();
-
-      rows.push({
-        vin,
-        vehicleTitle: vehicleTitleFrom(raw, vin),
-        shop: null,
-        counts: countsFromAnalyze(raw),
-        updated: new Date().toISOString(),
-      });
-    } catch (e) {
-      // keep row so you can still click through
-      rows.push({
-        vin,
-        vehicleTitle: vin,
-        shop: null,
-        counts: { overdue: 0, comingSoon: 0, notYet: 0 },
-        updated: null,
-      });
-    }
-  }
+    return {
+      vin: r.vin,
+      vehicleTitle: titleParts || r.vin,
+      shop: null,
+      counts,
+      updated: r?.createdAt ? new Date(r.createdAt).toISOString() : null,
+    };
+  });
 
   const totals = rows.reduce(
     (acc, r) => {
@@ -152,8 +148,6 @@ export async function GET(req: NextRequest) {
     rows,
     totals,
     __debug: {
-      vins,
-      originUsed: origin,
       rowCount: rows.length,
     },
   };
