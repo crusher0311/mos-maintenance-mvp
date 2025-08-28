@@ -32,3 +32,29 @@ temp/
 # Misc
 *.log
 .vercel
+
+/generated/prisma
+# dependencies & build
+node_modules/
+.next/
+out/
+dist/
+
+# local data
+prisma/dev.db
+prisma/dev.db-journal
+*.db
+*.db-journal
+
+# env & logs
+.env
+.env.*
+!.env.example
+*.log
+ngrok.log
+
+# misc
+.DS_Store
+# ---- local data (do NOT commit) ----
+.dataone_work/
+DataOne_US_LDV_Data.zip

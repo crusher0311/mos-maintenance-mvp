@@ -1,41 +1,16 @@
-// /app/api/maintenance/analyze/[vin]/route.ts
+// app/api/maintenance/analyze/[vin]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-/**
- * Adds:
- * - 24h in-memory cache for Vehicle Databases and OpenAI (configurable)
- * - Graceful fallbacks (return CARFAX-only if VD/OpenAI fails)
- * - Env-configurable thresholds for "coming soon"
- * - Masked logging for secrets
- * - Updated OpenAI prompt: "You are an automotive expert..."
- * - Vehicle Databases 429 retry with Retry-After awareness (up to 5 tries)
- */
+export const dynamic = "force-dynamic"; // avoid caching in dev/prod
 
-const CARFAX_LOCAL_ENDPOINT =
-  process.env.CARFAX_LOCAL_ENDPOINT || "http://localhost:3000/api/carfax/fetch";
+// ---------- helpers ----------
+const intParam = (v: string | null, dflt: number) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
+};
 
-const VEHICLE_DATABASES_API_KEY = process.env.VEHICLE_DATABASES_API_KEY || "";
-const VEHICLE_DATABASES_BASE =
-  process.env.VEHICLE_DATABASES_BASE || "https://api.vehicledatabases.com";
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-
-// Thresholds (env override)
-const DEFAULT_MPD = 30;
-const COMING_SOON_MILES = Number(process.env.COMING_SOON_MILES ?? 1500);
-const COMING_SOON_DAYS = Number(process.env.COMING_SOON_DAYS ?? 60);
-
-// Simple TTL caches (in-memory)
-type CacheEntry<T> = { at: number; data: T };
-const DAY_MS = 24 * 60 * 60 * 1000;
-const VD_CACHE_TTL_MS = Number(process.env.VD_CACHE_TTL_MS ?? DAY_MS);
-const OA_CACHE_TTL_MS = Number(process.env.OA_CACHE_TTL_MS ?? DAY_MS);
-
-const g = globalThis as any;
-g.__vd_cache ||= new Map<string, CacheEntry<any>>();
-g.__oa_cache ||= new Map<string, CacheEntry<any>>();
-const VD_CACHE: Map<string, CacheEntry<any>> = g.__vd_cache;
-const OA_CACHE: Map<string, CacheEntry<any>> = g.__oa_cache;
+const parseOdo = (s?: string) =>
+  (s ? parseInt(s.replace(/[^0-9]/g, ""), 10) : undefined);
 
 type DisplayRecord = {
   displayDate: string;
@@ -45,8 +20,20 @@ type DisplayRecord = {
   text: string[];
 };
 
-const parseOdo = (s?: string) =>
-  (s ? parseInt(s.replace(/[^0-9]/g, ""), 10) : undefined);
+type OeService = {
+  category: string;
+  name: string;
+  schedule?: { name: string } | null;
+  intervals: Array<{ miles?: number; months?: number; type: "every" | "at" }>;
+  trans_notes?: string | null;
+};
+
+const sortByDateAsc = <T extends { displayDate?: string }>(recs: T[]) =>
+  [...recs].sort(
+    (a, b) =>
+      new Date(a.displayDate || 0).getTime() -
+      new Date(b.displayDate || 0).getTime()
+  );
 
 const sortByDateDesc = <T extends { displayDate?: string }>(recs: T[]) =>
   [...recs].sort(
@@ -60,125 +47,46 @@ function estimateMilesPerDay(records: DisplayRecord[]): number | null {
     (r) => typeof r.odometerNum === "number" || r.odometer
   );
   if (withOdo.length < 2) return null;
-  const a = withOdo[0],
-    b = withOdo[1];
+  const a = withOdo[0], b = withOdo[1];
   const odoA =
     typeof a.odometerNum === "number" ? a.odometerNum : parseOdo(a.odometer);
   const odoB =
     typeof b.odometerNum === "number" ? b.odometerNum : parseOdo(b.odometer);
   if (typeof odoA !== "number" || typeof odoB !== "number") return null;
   const days =
-    (new Date(a.displayDate).getTime() -
-      new Date(b.displayDate || 0).getTime()) /
+    (new Date(a.displayDate).getTime() - new Date(b.displayDate || 0).getTime()) /
     (1000 * 60 * 60 * 24);
   return days > 0 ? (odoA - odoB) / days : null;
 }
 
 function todayISO() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
 }
 
-// ---------------- CARFAX ----------------
-async function getCarfaxRaw(vin: string, locationId?: string) {
-  const url = new URL(`${CARFAX_LOCAL_ENDPOINT}/${vin}`);
-  if (locationId) url.searchParams.set("locationId", locationId);
-  url.searchParams.set("raw", "1");
-
+async function postJson<T = any>(url: string, body: any): Promise<{ ok: boolean; status: number; body: T | any; }> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    cache: "no-store",
+    body: typeof body === "string" ? body : JSON.stringify(body ?? {}),
   });
-  if (!res.ok) throw new Error(`CARFAX route error: ${res.status}`);
-  return res.json() as Promise<any>;
+  const text = await res.text();
+  let parsed: any;
+  try { parsed = JSON.parse(text); } catch { parsed = text; }
+  return { ok: res.ok, status: res.status, body: parsed };
 }
 
-// -------------- Vehicle Databases --------------
-// Retry-aware helpers
-async function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-function retryAfterMs(res: Response, attempt: number) {
-  const ra = res.headers.get("retry-after");
-  const hinted = ra ? Number(ra) * 1000 : NaN;
-  if (!Number.isNaN(hinted) && hinted > 0) return hinted;
-  // fallback exponential backoff with jitter: 1s,2s,4s,5s,5s
-  const base = Math.min(5000, 1000 * Math.pow(2, attempt));
-  const jitter = Math.floor(Math.random() * 300);
-  return base + jitter;
+async function getJson<T = any>(url: string): Promise<{ ok: boolean; status: number; body: T | any; }> {
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text();
+  let parsed: any;
+  try { parsed = JSON.parse(text); } catch { parsed = text; }
+  return { ok: res.ok, status: res.status, body: parsed };
 }
 
-async function vdRequest(
-  path: string,
-  headerName: "x-AuthKey" | "Ocp-Apim-Subscription-Key"
-) {
-  if (!VEHICLE_DATABASES_API_KEY)
-    throw new Error("VEHICLE_DATABASES_API_KEY missing");
-  const url = `${VEHICLE_DATABASES_BASE}${path}`;
-  let last: Response | null = null;
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { [headerName]: VEHICLE_DATABASES_API_KEY },
-    });
-    last = res;
-
-    if (res.status !== 429) return res; // success or other error => return
-
-    const wait = retryAfterMs(res, attempt);
-    console.warn(`VD 429, retry ${attempt + 1}/5 in ${wait}ms for ${url}`);
-    await sleep(wait);
-  }
-  return last!;
-}
-
-async function fetchVDMaintenance(vin: string) {
-  const path = `/vehicle-maintenance/v3/${encodeURIComponent(vin)}`;
-
-  // 1) Preferred header: x-AuthKey
-  {
-    const res = await vdRequest(path, "x-AuthKey");
-    if (res.ok) {
-      console.log("VD auth OK via x-AuthKey @", VEHICLE_DATABASES_BASE);
-      return res.json();
-    }
-    if (res.status !== 401) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`VehicleDatabases error: ${res.status} ${t}`);
-    }
-    console.log("VD 401 via x-AuthKey — trying Ocp-Apim-Subscription-Key");
-  }
-
-  // 2) Alternate header: Ocp-Apim-Subscription-Key
-  {
-    const res = await vdRequest(path, "Ocp-Apim-Subscription-Key");
-    if (res.ok) {
-      console.log(
-        "VD auth OK via Ocp-Apim-Subscription-Key @",
-        VEHICLE_DATABASES_BASE
-      );
-      return res.json();
-    }
-    const t = await res.text().catch(() => "");
-    throw new Error(`VehicleDatabases error: ${res.status} ${t}`);
-  }
-}
-
-async function getVDMaintenanceCached(vin: string) {
-  const key = vin.toUpperCase();
-  const hit = VD_CACHE.get(key);
-  if (hit && Date.now() - hit.at < VD_CACHE_TTL_MS) {
-    return hit.data;
-  }
-  const data = await fetchVDMaintenance(key);
-  VD_CACHE.set(key, { at: Date.now(), data });
-  return data;
-}
-
-// -------------- OpenAI --------------
+// ---------- OpenAI ----------
 async function callOpenAIJSON(prompt: string) {
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
   if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
 
   const body = {
@@ -189,7 +97,9 @@ async function callOpenAIJSON(prompt: string) {
       {
         role: "system",
         content:
-          "You are an automotive expert. Compare CARFAX service history with the OEM maintenance schedule. Classify each service item as one of: overdue, due, coming_soon, or not_yet. Output strict JSON only — no explanations, no commentary, no extra text.",
+          "You are an automotive expert. Compare CARFAX service history with the OEM maintenance schedule. " +
+          "Use the provided current odometer and months-in-service to determine due/overdue/coming_soon/not_yet. " +
+          "Output strict JSON only—no explanations."
       },
       { role: "user", content: prompt },
     ],
@@ -203,6 +113,7 @@ async function callOpenAIJSON(prompt: string) {
     },
     body: JSON.stringify(body),
   });
+
   if (!res.ok) throw new Error(`OpenAI error: ${res.status} ${await res.text()}`);
   const data = await res.json();
   const content = data?.choices?.[0]?.message?.content;
@@ -210,136 +121,200 @@ async function callOpenAIJSON(prompt: string) {
   return JSON.parse(content);
 }
 
-async function callOpenAICached(cacheKey: string, prompt: string) {
-  const hit = OA_CACHE.get(cacheKey);
-  if (hit && Date.now() - hit.at < OA_CACHE_TTL_MS) {
-    return hit.data;
-  }
-  const data = await callOpenAIJSON(prompt);
-  OA_CACHE.set(cacheKey, { at: Date.now(), data });
-  return data;
+// ---------- VIN extraction (path-derived only) ----------
+function extractVin(req: NextRequest): string {
+  const url = new URL(req.url);
+  const pathname = url.pathname; // /api/maintenance/analyze/<VIN>
+  const parts = pathname.split("/").filter(Boolean);
+  const vinFromPath = decodeURIComponent(parts[parts.length - 1] || "");
+  return (vinFromPath || "").trim().toUpperCase();
 }
 
-// ---------------- Route ----------------
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ vin: string }> }
-) {
+// ---------- transmission helpers ----------
+function isAutoOnly(s: OeService): boolean {
+  const n = (s.name || "").toLowerCase();
+  const tn = (s.trans_notes || "").toLowerCase();
+  return /\bautomatic\b/.test(n) || /\bautomatic\b/.test(tn);
+}
+
+function isManualOnly(s: OeService): boolean {
+  const n = (s.name || "").toLowerCase();
+  const tn = (s.trans_notes || "").toLowerCase();
+  return /\bmanual\b/.test(n) || /\bmanual\b/.test(tn);
+}
+
+function filterByTransmission(services: OeService[], trans: "" | "manual" | "automatic") {
+  if (trans === "automatic") {
+    return { filtered: services.filter(s => !isManualOnly(s)), hadSpecific: services.some(s => isAutoOnly(s) || isManualOnly(s)) };
+  }
+  if (trans === "manual") {
+    return { filtered: services.filter(s => !isAutoOnly(s)), hadSpecific: services.some(s => isAutoOnly(s) || isManualOnly(s)) };
+  }
+  // Unknown transmission: keep all, but note that some were transmission-specific
+  return { filtered: services, hadSpecific: services.some(s => isAutoOnly(s) || isManualOnly(s)) };
+}
+
+// ---------- shared handler ----------
+async function handleAnalyze(req: NextRequest) {
   try {
-    console.log("ANALYZE HIT:", req.url);
-
-    // Masked secret preview
-    const vdKey = VEHICLE_DATABASES_API_KEY;
-    console.log("VD KEY len:", vdKey.length, "tail:", vdKey.slice(-6));
-    console.log("VD BASE:", VEHICLE_DATABASES_BASE);
-
-    const { vin } = await params; // Next.js 15 dynamic route params are async
-    const cleanVin = vin?.trim();
-    console.log("VIN from params:", cleanVin, "len:", cleanVin?.length);
-
-    if (!cleanVin || cleanVin.length !== 17) {
-      return NextResponse.json(
-        { error: "Invalid VIN", got: cleanVin, len: cleanVin?.length },
-        { status: 400 }
-      );
+    // VIN
+    const vin = extractVin(req);
+    if (vin.length !== 17) {
+      return NextResponse.json({ error: "VIN must be 17 characters" }, { status: 400 });
+    }
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
+      return NextResponse.json({ error: "VIN format invalid" }, { status: 400 });
     }
 
     const url = new URL(req.url);
-    const locationId = url.searchParams.get("locationId") || undefined;
+    const odometer = intParam(url.searchParams.get("odometer"), 0);
+    const monthsInServiceQuery = url.searchParams.has("monthsInService")
+      ? intParam(url.searchParams.get("monthsInService"), 0)
+      : null;
+    const scheduleRaw = (url.searchParams.get("schedule") || "normal").toLowerCase();
+    const schedule: "normal" | "severe" = scheduleRaw === "severe" ? "severe" : "normal";
+    const transRaw = (url.searchParams.get("trans") || "").toLowerCase();
+    const trans: "" | "manual" | "automatic" =
+      transRaw === "manual" ? "manual" :
+      transRaw === "automatic" ? "automatic" : "";
+    const horizonMiles = intParam(url.searchParams.get("horizonMiles"), 1000);
+    const horizonMonths = intParam(url.searchParams.get("horizonMonths"), 1);
 
-    // 1) CARFAX
-    const carfax = await getCarfaxRaw(cleanVin, locationId);
-    const serviceHistory = carfax?.serviceHistory || {};
-    const displayRecords: DisplayRecord[] = (serviceHistory?.displayRecords || []).map(
-      (r: any) => ({
-        ...r,
-        odometerNum:
-          typeof r.odometerNum === "number" ? r.odometerNum : parseOdo(r.odometer),
-      })
-    );
+    // 1) CARFAX (local route, raw)
+    const carfaxUrl = `${url.origin}/api/carfax/fetch/${vin}?raw=1`;
+    const carfaxRes = await postJson<any>(carfaxUrl, {});
+    const serviceHistory = carfaxRes.body?.serviceHistory || {};
+    const displayRecords: DisplayRecord[] = Array.isArray(serviceHistory?.displayRecords)
+      ? serviceHistory.displayRecords.map((r: any) => ({
+          ...r,
+          odometerNum:
+            typeof r.odometerNum === "number" ? r.odometerNum : parseOdo(r.odometer),
+        }))
+      : [];
 
-    const mpd = estimateMilesPerDay(displayRecords) ?? DEFAULT_MPD;
-
-    // 2) Vehicle Databases (with 429 retry & warnings)
-    let oe: any | null = null;
-    const warnings: string[] = [];
-    try {
-      oe = await getVDMaintenanceCached(cleanVin);
-    } catch (e: any) {
-      warnings.push(
-        `OEM schedule unavailable (Vehicle Databases error). Returned comparison is based on CARFAX only.`
-      );
-      console.warn("VD error:", e?.message || e);
+    // 2) Estimate months-in-service if not provided:
+    let monthsInService = monthsInServiceQuery;
+    let monthsInServiceNote: string | null = null;
+    if (monthsInService == null) {
+      const dates = sortByDateAsc(displayRecords)
+        .map(r => new Date(r.displayDate))
+        .filter(d => !isNaN(d.getTime()));
+      if (dates.length) {
+        const first = dates[0].getTime();
+        const now = Date.now();
+        const months = Math.floor((now - first) / (1000 * 60 * 60 * 24 * 30.44));
+        monthsInService = Math.max(0, months);
+        monthsInServiceNote = `Estimated months_in_service=${monthsInService} from earliest CARFAX record ${new Date(dates[0]).toISOString().slice(0,10)}.`;
+      }
     }
 
-    // 3) Prompt
+    const mpd = estimateMilesPerDay(displayRecords) ?? 30;
+
+    // 3) OE services via Next proxy (mock or real)
+    const oeUrl = `${url.origin}/api/oe/fetch/${vin}?schedule=${encodeURIComponent(schedule)}`;
+    const oeRes = await getJson<any>(oeUrl);
+    const oeBody = oeRes.body;
+    const oeServicesAll: OeService[] = Array.isArray(oeBody?.services) ? oeBody.services : [];
+
+    // 3a) Filter services by transmission
+    const { filtered: oeServices, hadSpecific } = filterByTransmission(oeServicesAll, trans);
+
+    // 3b) Adjust "coming soon" windows for severe schedule (tighter)
+    const SEVERE_SCALE = 0.75;
+    const comingSoonMilesWindow = schedule === "severe" ? Math.max(500, Math.round(1500 * SEVERE_SCALE)) : 1500;
+    const comingSoonDaysWindow  = schedule === "severe" ? Math.max(15,  Math.round(60   * SEVERE_SCALE)) : 60;
+
+    // 4) Build prompt for OpenAI
     const promptObj = {
       instructions: {
         current_date: todayISO(),
+        current_odometer_miles: odometer,
+        months_in_service: monthsInService,
         miles_per_day_estimate: mpd,
-        coming_soon_miles_window: COMING_SOON_MILES,
-        coming_soon_days_window: COMING_SOON_DAYS,
-        classify_into: ["due", "overdue", "coming_soon", "not_yet"],
+        schedule_mode: schedule,
+        transmission: trans || null,
+        horizon_miles: horizonMiles,
+        horizon_months: horizonMonths,
+        coming_soon_miles_window: comingSoonMilesWindow,
+        coming_soon_days_window: comingSoonDaysWindow,
+        classify_into: ["overdue", "due", "coming_soon", "not_yet"],
       },
-      carfax: {
-        vin: serviceHistory?.vin ?? cleanVin,
-        make: serviceHistory?.make,
-        model: serviceHistory?.model,
-        year: serviceHistory?.year,
-        displayRecords,
+      carfax_display_records: displayRecords,
+      oe_schedule: {
+        vin: oeBody?.vin ?? vin,
+        year: oeBody?.year ?? null,
+        make: oeBody?.make ?? null,
+        model: oeBody?.model ?? null,
+        services: oeServices.map((s: OeService) => ({
+          category: s.category,
+          name: s.name,
+          schedule: s?.schedule?.name ?? null,
+          intervals: s.intervals,
+          trans_notes: s.trans_notes ?? null,
+        })),
       },
-      oe_schedule: oe,
-      notes_for_model: warnings,
     };
 
     const prompt =
-      `Compare CARFAX history to OE schedule (if provided). Label each maintenance item as due/overdue/coming_soon/not_yet. ` +
-      `If OE schedule is missing, make a best-effort based only on CARFAX. Respond only with JSON containing ` +
-      `{ maintenance_comparison: { items: Array<{service, status}>, warnings?: string[], source_notes?: string[] } }.\n\n` +
+      `Compare CARFAX records to the provided OEM schedule and classify each service item. ` +
+      `Return ONLY JSON with shape: { maintenance_comparison: { items: Array<{service, status}>, warnings?: string[], source_notes?: string[] } }.\n\n` +
       JSON.stringify(promptObj, null, 2);
 
-    // 4) OpenAI
-    const oaKey = `ana:${cleanVin}:${oe ? "oe1" : "oe0"}:${COMING_SOON_MILES}:${COMING_SOON_DAYS}:${Math.round(
-      mpd
-    )}`;
-    let analysis: any = null;
-    try {
-      analysis = await callOpenAICached(oaKey, prompt);
-      if (warnings.length) {
-        analysis.maintenance_comparison = analysis.maintenance_comparison || {};
-        analysis.maintenance_comparison.warnings = [
-          ...(analysis.maintenance_comparison.warnings || []),
-          ...warnings,
-        ];
-      }
-      const notes: string[] = [];
-      if (oe) notes.push("Included Vehicle Databases OE schedule (cached).");
-      else notes.push("Vehicle Databases unavailable; CARFAX-only analysis.");
-      analysis.maintenance_comparison.source_notes = notes;
-    } catch (e: any) {
-      analysis = {
-        maintenance_comparison: {
-          items: [],
-          warnings: [
-            ...warnings,
-            "OpenAI analysis unavailable; returning raw vehicle details without classification.",
-          ],
-          source_notes: oe
-            ? ["VD OE schedule retrieved (cached), but OpenAI failed."]
-            : ["VD unavailable; OpenAI failed. Showing only basics."],
-        },
-      };
-      console.warn("OpenAI error:", e?.message || e);
+    // 5) OpenAI
+    let analysis = await callOpenAIJSON(prompt);
+
+    // 6) Attach source notes/warnings
+    analysis.maintenance_comparison ||= {};
+    analysis.maintenance_comparison.source_notes = [
+      ...(analysis.maintenance_comparison.source_notes || []),
+      "Included DataOne OE schedule (cached) via Express API.",
+    ];
+    if (schedule === "severe") {
+      analysis.maintenance_comparison.source_notes.push(
+        `Severe schedule applied: coming-soon windows tightened to ${comingSoonMilesWindow} miles / ${comingSoonDaysWindow} days.`
+      );
     }
+    if (monthsInServiceNote) {
+      analysis.maintenance_comparison.source_notes.push(monthsInServiceNote);
+    }
+    if (!carfaxRes.ok) {
+      analysis.maintenance_comparison.warnings = [
+        ...(analysis.maintenance_comparison.warnings || []),
+        `CARFAX fetch failed (${carfaxRes.status}); classification relies more heavily on OEM schedule & inputs.`,
+      ];
+    }
+    if (!trans && hadSpecific) {
+      analysis.maintenance_comparison.warnings = [
+        ...(analysis.maintenance_comparison.warnings || []),
+        "Some services are transmission-specific. Set ?trans=automatic or ?trans=manual for more precise results.",
+      ];
+    }
+
+    // 7) Count statuses for convenience
+    const items: Array<{ service: string; status: string }> =
+      analysis?.maintenance_comparison?.items ?? [];
+    const counts = items.reduce((acc, it) => {
+      const k = String(it.status || "unknown").toUpperCase();
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
 
     return NextResponse.json(
       {
-        vin: serviceHistory?.vin || cleanVin,
-        make: serviceHistory?.make,
-        model: serviceHistory?.model,
-        year: serviceHistory?.year,
-        miles_per_day_used: mpd,
+        vin,
+        inputs: {
+          odometer,
+          monthsInService,
+          schedule,
+          trans,
+          horizonMiles,
+          horizonMonths,
+          milesPerDayUsed: mpd,
+          comingSoonMilesWindow,
+          comingSoonDaysWindow,
+        },
         analysis,
+        counts
       },
       { status: 200 }
     );
@@ -348,6 +323,10 @@ export async function POST(
   }
 }
 
-export async function GET(req: Request, ctx: any) {
-  return POST(req as any, ctx);
+// ---------- route wrappers (no params usage) ----------
+export async function GET(req: NextRequest) {
+  return handleAnalyze(req);
+}
+export async function POST(req: NextRequest) {
+  return handleAnalyze(req);
 }
