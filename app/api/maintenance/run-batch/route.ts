@@ -1,6 +1,9 @@
 // /app/api/maintenance/run-batch/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "../../../lib/mongo";
+import { getMongo } from "../../../lib/mongo";
+
+const client = await getMongo();
+const db = client.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp");
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

@@ -1,6 +1,6 @@
 // /app/dashboard/maintenance/page.tsx
 import React from "react";
-import { getDb } from "../../lib/mongo";
+import { getMongo } from "../../lib/mongo";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,11 @@ type Row = {
 };
 
 export default async function Page() {
-  const db = await getDb();
+  // Connect to Mongo and select the DB
+  const client = await getMongo();
+  const db = client.db(
+    process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp"
+  );
 
   // Latest 100 analysis docs from vehicleschedules
   const docs = (await db
@@ -48,7 +52,9 @@ export default async function Page() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {["overdue", "due", "coming_soon", "not_yet"].map((k) => (
           <div key={k} className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs uppercase text-slate-500">{k.replace("_", " ")}</div>
+            <div className="text-xs uppercase text-slate-500">
+              {k.replace("_", " ")}
+            </div>
             <div className="text-2xl font-semibold">{totals[k] || 0}</div>
           </div>
         ))}
@@ -69,7 +75,9 @@ export default async function Page() {
           <tbody>
             {docs.map((r) => {
               const veh = r.result || {};
-              const vehicle = [veh?.year, veh?.make, veh?.model].filter(Boolean).join(" ") || "—";
+              const vehicle =
+                [veh?.year, veh?.make, veh?.model].filter(Boolean).join(" ") ||
+                "—";
               const counts = r.counters || {};
               const updated =
                 typeof r.updatedAt === "string"
@@ -91,13 +99,15 @@ export default async function Page() {
                   <td className="px-3 py-2">{vehicle}</td>
                   <td className="px-3 py-2">{r.shopId || "—"}</td>
                   <td className="px-3 py-2">
-                    {["overdue", "due", "coming_soon", "not_yet"].map((k) => badge(k))}
+                    {["overdue", "due", "coming_soon", "not_yet"].map((k) =>
+                      badge(k)
+                    )}
                   </td>
                   <td className="px-3 py-2 text-slate-600">{updated}</td>
                   <td className="px-3 py-2">
                     <a
                       className="text-xs rounded-lg border border-slate-300 px-3 py-1 hover:bg-slate-100"
-                      href={`/vehicles/${encodeURIComponent(r.vin)}/maintenance`}
+                      href={`/vehicle/${encodeURIComponent(r.vin)}`}
                       target="_blank"
                     >
                       View
@@ -109,7 +119,9 @@ export default async function Page() {
             {docs.length === 0 && (
               <tr>
                 <td className="px-3 py-6 text-slate-600" colSpan={6}>
-                  No rows yet. POST to <code className="font-mono">/api/maintenance/run-batch</code> to populate.
+                  No rows yet. POST to{" "}
+                  <code className="font-mono">/api/maintenance/run-batch</code>{" "}
+                  to populate.
                 </td>
               </tr>
             )}
@@ -118,8 +130,8 @@ export default async function Page() {
       </div>
 
       <div className="text-xs text-slate-500">
-        Reading from <code className="font-mono">vehicleschedules</code>. Rows updated by the batch
-        route using your analyzer endpoint.
+        Reading from <code className="font-mono">vehicleschedules</code>. Rows
+        are updated by the batch route using your analyzer endpoint.
       </div>
     </div>
   );
