@@ -1,3 +1,4 @@
+// app/api/maintenance/analyze/[vin]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -290,11 +291,27 @@ export async function POST(
       counts,
     };
 
+    // ---- DEBUG INSPECTOR (optional via ?debug=1) ----
     if (debugWanted) {
       try {
-        // NOTE: use relative path here too to avoid alias ambiguity on Vercel
-        const { getDb } = await import("../../../../../lib/mongo");
-        const db = await getDb();
+        // Use a relative import to avoid alias ambiguity on Vercel
+        const mongo = await import("../../../../../lib/mongo");
+        const anyLib: any = mongo;
+
+        // Compatibility: support either lib exposing getDb() or getMongo()
+        const getDbCompat = async () => {
+          if (typeof anyLib.getDb === "function") return anyLib.getDb();
+          if (typeof anyLib.getMongo === "function") {
+            const m = await anyLib.getMongo();
+            // If a MongoClient is returned, call .db(); otherwise assume it's already a Db
+            return m && typeof m.db === "function"
+              ? m.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp")
+              : m;
+          }
+          throw new Error("lib/mongo must export getDb() or getMongo()");
+        };
+
+        const db = await getDbCompat();
 
         const oeSnapshot = {
           source: oeBody?.source ?? undefined,
@@ -351,6 +368,7 @@ export async function POST(
         resp._debug_error = e?.message || String(e);
       }
     }
+    // ---- /DEBUG INSPECTOR ----
 
     return NextResponse.json(resp, { status: 200 });
   } catch (err: any) {
@@ -362,5 +380,6 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ vin: string }> }
 ) {
+  // Reuse POST handler (with awaited params)
   return POST(req, ctx as any);
 }

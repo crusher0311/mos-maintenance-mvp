@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-// IMPORTANT: avoid alias for mongo – use a relative path to the root lib file
-import { getDb } from "../../../../../lib/mongo";
+// Use a RELATIVE path to the root lib file (not "@/lib/mongo")
+import * as mongoLib from "../../../../../lib/mongo";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+async function getDbCompat() {
+  const anyLib = mongoLib as any;
+  if (typeof anyLib.getDb === "function") return anyLib.getDb();
+  if (typeof anyLib.getMongo === "function") {
+    const m = await anyLib.getMongo();
+    // If getMongo returns a MongoClient, call .db(); otherwise assume it's already a Db.
+    return m && typeof m.db === "function"
+      ? m.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp")
+      : m;
+  }
+  throw new Error("lib/mongo must export getDb() or getMongo()");
+}
 
 const toStr = (v: any) => (typeof v === "string" ? v : v == null ? "" : String(v));
 const bool = (v?: string | null) =>
@@ -125,7 +138,8 @@ export async function GET(
       return NextResponse.json({ vin, schedule, filtersApplied, totalBefore: 0, totalAfter: 0, services: [], warning: "Missing year/make/model" }, { status: 200 });
     }
 
-    const db = await getDb();
+    const db = await getDbCompat();
+
     const keyMake = make.toLowerCase();
     const keyModel = model.toLowerCase();
 
