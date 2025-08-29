@@ -1,6 +1,6 @@
+// app/api/oe/fetch/[vin]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getMongo } from "@/lib/mongo"; // <— use getMongo (works on Vercel)
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -8,45 +8,31 @@ export const runtime = "nodejs";
 const toStr = (v: any) => (typeof v === "string" ? v : v == null ? "" : String(v));
 const bool = (v?: string | null) =>
   ["1", "true", "yes", "on"].includes(String(v ?? "").toLowerCase());
-const intOrNull = (v?: string | null) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
+const intOrNull = (v?: string | null) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Normalize one service object (handles multiple shapes)
+// Normalize one service object (works for both schemas)
 function normalizeService(doc: any) {
-  const category =
-    doc.category ?? doc.Category ?? doc.component ?? doc.Component ?? "General";
+  const category = doc.category ?? doc.Category ?? doc.component ?? doc.Component ?? "General";
   const name =
-    doc.name ??
-    doc.Name ??
-    doc.service ??
-    doc.Service ??
-    doc.maintenance ??
-    doc.Description ??
-    "Unknown Service";
+    doc.name ?? doc.Name ?? doc.service ?? doc.Service ?? doc.maintenance ?? doc.Description ?? "Unknown Service";
 
   let intervals: any[] = Array.isArray(doc.intervals) ? doc.intervals : [];
   if (!intervals.length) {
     const miles = doc.miles ?? doc.interval_miles ?? null;
     const months = doc.months ?? doc.interval_months ?? null;
     if (miles || months) {
-      intervals = [
-        {
-          type: "Every",
-          value: miles ?? months,
-          units: miles ? "Miles" : "Months",
-          initial: 0,
-        },
-      ];
+      intervals = [{
+        type: "Every",
+        value: miles ?? months,
+        units: miles ? "Miles" : "Months",
+        initial: 0
+      }];
     }
   }
 
   const scheduleName =
-    doc?.schedule?.name ??
-    doc?.ScheduleName ??
-    (doc?.isEvery ? "Every" : doc?.isAt ? "At" : undefined);
+    doc?.schedule?.name ?? doc?.ScheduleName ?? (doc?.isEvery ? "Every" : doc?.isAt ? "At" : undefined);
 
   return {
     category,
@@ -76,20 +62,19 @@ function shouldInclude(
 
   if (filters.fuel === "gas" && /diesel/.test(nm)) return false;
   if (filters.fuel === "diesel" && /\bgas(oline)?\b/.test(nm)) return false;
-  if (filters.fuel === "ev" && /(engine|oil|spark plug|fuel|gasoline|diesel)/.test(nm))
-    return false;
+  if (filters.fuel === "ev" && /(engine|oil|spark plug|fuel|gasoline|diesel)/.test(nm)) return false;
 
   if (filters.trans === "automatic" && /manual/.test(nm)) return false;
   if (filters.trans === "manual" && /automatic/.test(nm)) return false;
 
   const mentionsFrontDiff = /(front diff|front differential)/i.test(nm);
-  const mentionsRearDiff = /(rear diff|rear differential)/i.test(nm);
-  const mentionsTcase = /(transfer case)/i.test(nm);
-  const mentions4wdAwd = /\b(4wd|awd)\b/i.test(nm);
+  const mentionsRearDiff  = /(rear diff|rear differential)/i.test(nm);
+  const mentionsTcase     = /(transfer case)/i.test(nm);
+  const mentions4wdAwd    = /\b(4wd|awd)\b/i.test(nm);
 
   if (mentionsFrontDiff && !filters.hasFrontDiff) return false;
-  if (mentionsRearDiff && !filters.hasRearDiff) return false;
-  if (mentionsTcase && !filters.hasTransferCase) return false;
+  if (mentionsRearDiff  && !filters.hasRearDiff)  return false;
+  if (mentionsTcase     && !filters.hasTransferCase) return false;
   if (mentions4wdAwd && !/\b(4wd|awd)\b/i.test(filters.drivetrain ?? "")) return false;
 
   return true;
@@ -100,6 +85,7 @@ export async function GET(
   { params }: { params: Promise<{ vin: string }> }
 ) {
   try {
+    // ✅ Next.js 15: params is a Promise
     const { vin: vinRaw } = await params;
     const vin = (vinRaw || "").trim().toUpperCase();
     if (vin.length !== 17) {
@@ -115,8 +101,7 @@ export async function GET(
 
     const fuel = toStr(url.searchParams.get("fuel")).toLowerCase() || undefined;
     const trans = toStr(url.searchParams.get("trans")).toLowerCase() || undefined;
-    let drivetrain =
-      toStr(url.searchParams.get("drivetrain")).toLowerCase() || undefined;
+    let drivetrain = toStr(url.searchParams.get("drivetrain")).toLowerCase() || undefined;
 
     let hasFrontDiff = bool(url.searchParams.get("hasFrontDiff"));
     let hasRearDiff = bool(url.searchParams.get("hasRearDiff"));
@@ -124,13 +109,10 @@ export async function GET(
 
     // Fill missing Y/M/M from Prisma
     if (!year || !make || !model || !drivetrain) {
-      const v = await prisma.vehicle.findUnique({
-        where: { vin },
-        select: { year: true, make: true, model: true },
-      });
+      const v = await prisma.vehicle.findUnique({ where: { vin }, select: { year: true, make: true, model: true } });
       if (v) {
-        year = year ?? ((v.year ?? undefined) as any);
-        make = make || toStr(v.make);
+        year  = year  ?? (v.year ?? undefined as any);
+        make  = make  || toStr(v.make);
         model = model || toStr(v.model);
       }
     }
@@ -140,75 +122,59 @@ export async function GET(
       const d = drivetrain ?? "";
       if (d === "rwd") hasRearDiff = true;
       else if (d === "fwd") hasFrontDiff = true;
-      else if (d === "4wd") {
-        hasFrontDiff = true;
-        hasRearDiff = true;
-        hasTransferCase = true;
-      } else if (d === "awd") {
-        hasFrontDiff = true;
-        hasRearDiff = true;
-      }
+      else if (d === "4wd") { hasFrontDiff = true; hasRearDiff = true; hasTransferCase = true; }
+      else if (d === "awd") { hasFrontDiff = true; hasRearDiff = true; }
     }
 
     const filtersApplied = {
-      fuel,
-      trans,
-      drivetrain,
+      fuel, trans, drivetrain,
       turbo: bool(url.searchParams.get("turbo")),
       supercharged: bool(url.searchParams.get("supercharged")),
       cylinders: intOrNull(url.searchParams.get("cylinders")) || 0,
       liters: Number(url.searchParams.get("liters")) || 0,
-      schedule,
-      hasFrontDiff,
-      hasRearDiff,
-      hasTransferCase,
+      schedule, hasFrontDiff, hasRearDiff, hasTransferCase,
     };
 
     if (!year || !make || !model) {
       return NextResponse.json(
-        {
-          vin,
-          schedule,
-          filtersApplied,
-          totalBefore: 0,
-          totalAfter: 0,
-          services: [],
-          warning: "Missing year/make/model",
-        },
+        { vin, schedule, filtersApplied, totalBefore: 0, totalAfter: 0, services: [], warning: "Missing year/make/model" },
         { status: 200 }
       );
     }
 
-    // --- DB handle (works if lib returns Db *or* MongoClient) ---
-    const mongo = await getMongo();
-    const db: any =
-      mongo && typeof (mongo as any).db === "function"
-        ? (mongo as any).db(
-            process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp"
-          )
-        : mongo;
+    // --- COMPAT Mongo loader: supports lib/mongo.ts exporting getDb() OR getMongo() ---
+    const mongo = await import("../../../../../lib/mongo");
+    const anyLib: any = mongo;
+    const getDbCompat = async () => {
+      if (typeof anyLib.getDb === "function") return anyLib.getDb();
+      if (typeof anyLib.getMongo === "function") {
+        const m = await anyLib.getMongo();
+        return m && typeof m.db === "function"
+          ? m.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp")
+          : m;
+      }
+      throw new Error("lib/mongo must export getDb() or getMongo()");
+    };
+    const db = await getDbCompat();
+    // -------------------------------------------------------------------------------
 
     const keyMake = make.toLowerCase();
     const keyModel = model.toLowerCase();
 
     // Try `oeschedules` first (doc-per-YMM with embedded services)
     const oeDoc =
-      (await db
-        .collection("oeschedules")
-        .findOne(
-          { make_key: keyMake, model_key: keyModel, year },
-          { projection: { _id: 0, services: 1 } }
-        )) ||
-      (await db
-        .collection("oeschedules")
-        .findOne(
-          {
-            year,
-            make: { $regex: `^${esc(make)}$`, $options: "i" },
-            model: { $regex: `^${esc(model)}$`, $options: "i" },
-          },
-          { projection: { _id: 0, services: 1 } }
-        ));
+      (await db.collection("oeschedules").findOne(
+        { make_key: keyMake, model_key: keyModel, year },
+        { projection: { _id: 0, services: 1 } }
+      )) ||
+      (await db.collection("oeschedules").findOne(
+        {
+          year,
+          make: { $regex: `^${esc(make)}$`, $options: "i" },
+          model: { $regex: `^${esc(model)}$`, $options: "i" },
+        },
+        { projection: { _id: 0, services: 1 } }
+      ));
 
     let rawServices: any[] = [];
     let source = "";
@@ -218,15 +184,11 @@ export async function GET(
       source = "oeschedules";
     } else {
       // Fallback to `services_by_ymm`
-      const docs = await db
-        .collection("services_by_ymm")
-        .find({
-          year,
-          make: { $regex: `^${esc(make)}$`, $options: "i" },
-          model: { $regex: `^${esc(model)}$`, $options: "i" },
-        })
-        .limit(5000)
-        .toArray();
+      const docs = await db.collection("services_by_ymm").find({
+        year,
+        make: { $regex: `^${esc(make)}$`, $options: "i" },
+        model: { $regex: `^${esc(model)}$`, $options: "i" },
+      }).limit(5000).toArray();
 
       if (docs.length === 1 && Array.isArray((docs[0] as any).services)) {
         // Aggregated shape: one doc with services[]
@@ -241,47 +203,26 @@ export async function GET(
     const totalBefore = rawServices.length;
     if (!totalBefore) {
       return NextResponse.json(
-        {
-          vin,
-          schedule,
-          filtersApplied,
-          totalBefore: 0,
-          totalAfter: 0,
-          services: [],
-          _debug: { db: db.databaseName, source },
-        },
+        { vin, schedule, filtersApplied, totalBefore: 0, totalAfter: 0, services: [], _debug: { db: db.databaseName, source } },
         { status: 200 }
       );
     }
 
     const normalized = rawServices.map(normalizeService);
-    const filtered = normalized.filter((svc) =>
-      shouldInclude(svc, {
-        fuel,
-        trans,
-        drivetrain,
-        hasFrontDiff,
-        hasRearDiff,
-        hasTransferCase,
-      })
+    const filtered = normalized.filter(svc =>
+      shouldInclude(svc, { fuel, trans, drivetrain, hasFrontDiff, hasRearDiff, hasTransferCase })
     );
 
     return NextResponse.json(
       {
-        vin,
-        schedule,
-        filtersApplied,
-        totalBefore,
-        totalAfter: filtered.length,
+        vin, schedule, filtersApplied,
+        totalBefore, totalAfter: filtered.length,
         services: filtered,
-        _debug: { db: db.databaseName, source },
+        _debug: { db: db.databaseName, source }
       },
       { status: 200 }
     );
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Internal Error", stack: e?.stack },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message || "Internal Error", stack: e?.stack }, { status: 500 });
   }
 }
