@@ -121,6 +121,7 @@ export async function POST(
   { params }: { params: Promise<{ vin: string }> }
 ) {
   try {
+    // ✅ await dynamic params
     const { vin: rawVin } = await params;
     const vin = (rawVin || "").trim().toUpperCase();
     if (vin.length !== 17) {
@@ -131,7 +132,8 @@ export async function POST(
     const debugWanted = url.searchParams.has("debug");
     const odometer = intParam(url.searchParams.get("odometer"), 0);
 
-    const schedule = (url.searchParams.get("schedule") || "normal").toLowerCase();
+    // optional inputs forwarded to OE endpoint
+    const schedule = (url.searchParams.get("schedule") || "normal").toLowerCase(); // normal | severe
     const trans = toStr(url.searchParams.get("trans") ?? "");
     const fuel = toStr(url.searchParams.get("fuel") ?? "");
     const drivetrain = toStr(url.searchParams.get("drivetrain") ?? "");
@@ -204,6 +206,7 @@ export async function POST(
       );
     }
 
+    // 3) Build strict prompt for OpenAI
     const promptObj = {
       instructions: {
         current_date: todayISO(),
@@ -235,8 +238,22 @@ export async function POST(
       `{\n  "maintenance_comparison": {\n    "items": Array<{ "service": string, "status": "overdue"|"due"|"coming_soon"|"not_yet" }>,\n    "warnings"?: string[],\n    "source_notes"?: string[]\n  }\n}\n\n` +
       JSON.stringify(promptObj, null, 2);
 
-    let analysis = await callOpenAIJSON(prompt);
+    // 4) OpenAI (defensive)
+    let analysis: any;
+    try {
+      analysis = await callOpenAIJSON(prompt);
+    } catch (e: any) {
+      // Fallback: mark everything as not_yet so the endpoint still responds cleanly
+      analysis = {
+        maintenance_comparison: {
+          items: allowedServices.map((s) => ({ service: s, status: "not_yet" })),
+          warnings: [`OpenAI classification failed: ${e?.message || String(e)}`],
+          source_notes: [],
+        },
+      };
+    }
 
+    // Normalize & enforce allowed services only
     const items: Array<{ service: string; status: string }> =
       Array.isArray(analysis?.maintenance_comparison?.items)
         ? analysis.maintenance_comparison.items
@@ -260,12 +277,21 @@ export async function POST(
       ];
     }
 
-    const counts = sanitized.reduce((acc, it) => {
+    // Count statuses (normalize keys)
+    const countsRaw = sanitized.reduce((acc, it) => {
       const k = String(it.status || "unknown").toUpperCase();
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
+    const counts: Record<string, number> = {
+      OVERDUE: countsRaw.OVERDUE || 0,
+      DUE: countsRaw.DUE || 0,
+      COMING_SOON: countsRaw.COMING_SOON || 0,
+      NOT_YET: countsRaw.NOT_YET || 0,
+    };
+
+    // Inputs bundle (also reused in debug)
     const inputs = {
       odometer,
       monthsInService,
@@ -280,6 +306,7 @@ export async function POST(
       comingSoonDaysWindow,
     };
 
+    // Base response
     const resp: any = {
       vin,
       inputs,
@@ -294,16 +321,15 @@ export async function POST(
     // ---- DEBUG INSPECTOR (optional via ?debug=1) ----
     if (debugWanted) {
       try {
-        // Use a relative import to avoid alias ambiguity on Vercel
+        // Use a relative import to avoid alias ambiguity on Vercel/Turbopack
         const mongo = await import("../../../../../lib/mongo");
         const anyLib: any = mongo;
 
-        // Compatibility: support either lib exposing getDb() or getMongo()
+        // Compat: lib may export getDb() or getMongo()
         const getDbCompat = async () => {
           if (typeof anyLib.getDb === "function") return anyLib.getDb();
           if (typeof anyLib.getMongo === "function") {
             const m = await anyLib.getMongo();
-            // If a MongoClient is returned, call .db(); otherwise assume it's already a Db
             return m && typeof m.db === "function"
               ? m.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp")
               : m;
