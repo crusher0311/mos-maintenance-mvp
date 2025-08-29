@@ -1,4 +1,3 @@
-// app/api/maintenance/analyze/[vin]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -121,20 +120,8 @@ export async function POST(
   { params }: { params: Promise<{ vin: string }> }
 ) {
   try {
-    // ✅ Robust VIN extraction: use params if present, else parse from the URL path
-    const p = (await params) || ({} as any);
-    const segFromPath = (() => {
-      try {
-        const parts = new URL(req.url).pathname.split("/").filter(Boolean);
-        // /api/maintenance/analyze/<VIN>
-        return parts[parts.length - 1] || "";
-      } catch {
-        return "";
-      }
-    })();
-    const rawVin = toStr(p.vin || segFromPath);
-    const vin = rawVin.trim().toUpperCase();
-
+    const { vin: rawVin } = await params;
+    const vin = (rawVin || "").trim().toUpperCase();
     if (vin.length !== 17) {
       return NextResponse.json({ error: "VIN must be 17 characters" }, { status: 400 });
     }
@@ -143,8 +130,7 @@ export async function POST(
     const debugWanted = url.searchParams.has("debug");
     const odometer = intParam(url.searchParams.get("odometer"), 0);
 
-    // optional inputs forwarded to OE endpoint
-    const schedule = (url.searchParams.get("schedule") || "normal").toLowerCase(); // normal | severe
+    const schedule = (url.searchParams.get("schedule") || "normal").toLowerCase();
     const trans = toStr(url.searchParams.get("trans") ?? "");
     const fuel = toStr(url.searchParams.get("fuel") ?? "");
     const drivetrain = toStr(url.searchParams.get("drivetrain") ?? "");
@@ -178,7 +164,7 @@ export async function POST(
     const monthsInService =
       firstDate ? Math.max(0, Math.round((Date.now() - new Date(firstDate).getTime()) / (1000 * 60 * 60 * 24 * 30))) : null;
 
-    // 2) OE services via our Next proxy (Mongo-backed)
+    // 2) OE services
     const qsCore = new URLSearchParams({
       schedule,
       ...(fuel ? { fuel } : {}),
@@ -198,7 +184,6 @@ export async function POST(
     const oeBody = oeRes.body;
     const oeServices = Array.isArray(oeBody?.services) ? oeBody.services : [];
 
-    // Build the list of services we will classify
     const allowedServices = [...new Set(
       oeServices
         .map((s: any) => toStr(s?.name).trim())
@@ -212,33 +197,20 @@ export async function POST(
           hint:
             "Check /api/oe/fetch filters (fuel, trans, drivetrain, year/make/model) or your Mongo data mapping.",
           vin,
-          forwardedFilters: {
-            schedule,
-            fuel,
-            trans,
-            drivetrain,
-            turbo: !!turbo,
-            supercharged: !!supercharged,
-            cylinders,
-            liters,
-            year,
-            make,
-            model,
-          },
+          forwardedFilters: { schedule, fuel, trans, drivetrain, turbo: !!turbo, supercharged: !!supercharged, cylinders, liters, year, make, model },
         },
         { status: 424 }
       );
     }
 
-    // 3) Build strict prompt for OpenAI
     const promptObj = {
       instructions: {
         current_date: todayISO(),
         current_odometer_miles: odometer,
         months_in_service: monthsInService,
         miles_per_day_estimate: mpd,
-        schedule_mode: schedule, // normal | severe
-        transmission: trans || null, // manual | automatic | null
+        schedule_mode: schedule,
+        transmission: trans || null,
         horizon_miles: horizonMiles,
         horizon_months: horizonMonths,
         coming_soon_miles_window: comingSoonMilesWindow,
@@ -254,7 +226,7 @@ export async function POST(
         ],
       },
       services_to_classify: allowedServices,
-      carfax_display_records: displayRecords, // history only
+      carfax_display_records: displayRecords,
     };
 
     const prompt =
@@ -262,10 +234,8 @@ export async function POST(
       `{\n  "maintenance_comparison": {\n    "items": Array<{ "service": string, "status": "overdue"|"due"|"coming_soon"|"not_yet" }>,\n    "warnings"?: string[],\n    "source_notes"?: string[]\n  }\n}\n\n` +
       JSON.stringify(promptObj, null, 2);
 
-    // 4) OpenAI
     let analysis = await callOpenAIJSON(prompt);
 
-    // Normalize & enforce allowed services only
     const items: Array<{ service: string; status: string }> =
       Array.isArray(analysis?.maintenance_comparison?.items)
         ? analysis.maintenance_comparison.items
@@ -276,7 +246,6 @@ export async function POST(
       .filter((it) => allowedSet.has(toStr(it.service).toLowerCase()))
       .map((it) => ({ service: toStr(it.service), status: toStr(it.status).toLowerCase() }));
 
-    // Replace items with sanitized list
     analysis.maintenance_comparison ||= {};
     analysis.maintenance_comparison.items = sanitized;
     analysis.maintenance_comparison.source_notes = [
@@ -290,14 +259,12 @@ export async function POST(
       ];
     }
 
-    // Count statuses
     const counts = sanitized.reduce((acc, it) => {
       const k = String(it.status || "unknown").toUpperCase();
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    // Inputs bundle (also reused in debug)
     const inputs = {
       odometer,
       monthsInService,
@@ -312,7 +279,6 @@ export async function POST(
       comingSoonDaysWindow,
     };
 
-    // Base response
     const resp: any = {
       vin,
       inputs,
@@ -324,10 +290,12 @@ export async function POST(
       counts,
     };
 
-    // ---- DEBUG INSPECTOR (optional via ?debug=1) ----
     if (debugWanted) {
       try {
-        // OE snapshot
+        // NOTE: use relative path here too to avoid alias ambiguity on Vercel
+        const { getDb } = await import("../../../../../lib/mongo");
+        const db = await getDb();
+
         const oeSnapshot = {
           source: oeBody?.source ?? undefined,
           totalBefore: oeBody?.totalBefore ?? (oeServices?.length ?? null),
@@ -337,7 +305,6 @@ export async function POST(
           explain: Array.isArray(oeBody?.explain) ? oeBody.explain.slice(0, 10) : oeBody?.explain ?? null,
         };
 
-        // Carfax snapshot
         const cf = carfaxRes.body || null;
         const carfaxSnapshot = {
           ok: carfaxRes.ok,
@@ -350,32 +317,22 @@ export async function POST(
             : null,
         };
 
-        // Autoflow / DVI from Mongo (recent samples)
-        let autoflowSnapshot: any = {};
-        try {
-          const { getDb } = await import("@/lib/mongo");
-          const db = await getDb();
-          const dviCol = db.collection("inspectionfindings");
-          const evtCol = db.collection("serviceevents");
+        const dviCol = db.collection("inspectionfindings");
+        const evtCol = db.collection("serviceevents");
+        const dviDocs = await dviCol.find({ vin }).sort({ created_at: -1 }).limit(10).toArray();
+        const afDocs = await evtCol
+          .find({ vin, source: { $in: ["autoflow", "AF", "autoflow_webhook"] } })
+          .sort({ created_at: -1 })
+          .limit(10)
+          .toArray();
 
-          const dviDocs = await dviCol.find({ vin }).sort({ created_at: -1 }).limit(10).toArray();
-          const afDocs = await evtCol
-            .find({ vin, source: { $in: ["autoflow", "AF", "autoflow_webhook"] } })
-            .sort({ created_at: -1 })
-            .limit(10)
-            .toArray();
+        const autoflowSnapshot = {
+          dvi_count: dviDocs.length,
+          dvi_sample: dviDocs.slice(0, 5),
+          events_count: afDocs.length,
+          events_sample: afDocs.slice(0, 5),
+        };
 
-          autoflowSnapshot = {
-            dvi_count: dviDocs.length,
-            dvi_sample: dviDocs.slice(0, 5),
-            events_count: afDocs.length,
-            events_sample: afDocs.slice(0, 5),
-          };
-        } catch (e: any) {
-          autoflowSnapshot = { error: e?.message || String(e) };
-        }
-
-        // What the classifier actually saw
         const classificationInputs = {
           services_to_classify_count: allowedServices.length,
           services_to_classify_sample: allowedServices.slice(0, 10),
@@ -394,7 +351,6 @@ export async function POST(
         resp._debug_error = e?.message || String(e);
       }
     }
-    // ---- /DEBUG INSPECTOR ----
 
     return NextResponse.json(resp, { status: 200 });
   } catch (err: any) {
@@ -406,6 +362,5 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ vin: string }> }
 ) {
-  // Reuse POST handler (with awaited params)
   return POST(req, ctx as any);
 }
