@@ -1,4 +1,4 @@
-// app/lib/mongo.ts
+@'
 import { MongoClient, Db } from "mongodb";
 
 const URI =
@@ -11,7 +11,6 @@ const DB_NAME =
   process.env.DB_NAME ||
   "mos-maintenance-mvp";
 
-// Simple connection cache so we don't reconnect on every call
 let _client: MongoClient | null = null;
 let _connecting: Promise<MongoClient> | null = null;
 
@@ -33,17 +32,14 @@ async function connect(): Promise<MongoClient> {
   return _connecting;
 }
 
-/**
- * Return a connected MongoClient
- */
+/** Return a connected MongoClient */
 export async function getMongo(): Promise<MongoClient> {
   return connect();
 }
 
-/**
- * Return a Db instance (so callers that import { getDb } keep working)
- */
+/** Return a Db instance (compat for code importing { getDb }) */
 export async function getDb(): Promise<Db> {
   const client = await connect();
   return client.db(DB_NAME);
 }
+'@ | Set-Content -Encoding UTF8 app\lib\mongo.ts
