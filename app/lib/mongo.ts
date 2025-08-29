@@ -11,7 +11,7 @@ const DB_NAME =
   process.env.DB_NAME ||
   "mos-maintenance-mvp";
 
-// Simple singleton to avoid multiple connections in dev/SSR
+// Simple connection cache so we don't reconnect on every call
 let _client: MongoClient | null = null;
 let _connecting: Promise<MongoClient> | null = null;
 
@@ -33,10 +33,16 @@ async function connect(): Promise<MongoClient> {
   return _connecting;
 }
 
+/**
+ * Return a connected MongoClient
+ */
 export async function getMongo(): Promise<MongoClient> {
   return connect();
 }
 
+/**
+ * Return a Db instance (so callers that import { getDb } keep working)
+ */
 export async function getDb(): Promise<Db> {
   const client = await connect();
   return client.db(DB_NAME);
