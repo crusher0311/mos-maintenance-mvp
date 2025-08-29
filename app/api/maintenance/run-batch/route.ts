@@ -2,9 +2,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMongo } from "../../../lib/mongo";
 
-const client = await getMongo();
-const db = client.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp");
-
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -16,13 +13,18 @@ export const runtime = "nodejs";
  * - Upserts results into `vehicleschedules`
  *
  * ENV:
- *   BATCH_RECENT_HOURS  (default 24)
- *   BATCH_CONCURRENCY   (default 2)
+ *   ANALYZE_BASE         (optional; fallback is current request origin)
+ *   BATCH_RECENT_HOURS   (default 24)
+ *   BATCH_CONCURRENCY    (default 2)
  */
 
-const ANALYZE_BASE = process.env.ANALYZE_BASE || "http://localhost:3000";
 const BATCH_RECENT_HOURS = Number(process.env.BATCH_RECENT_HOURS ?? 24);
 const CONCURRENCY = Number(process.env.BATCH_CONCURRENCY ?? 2);
+
+async function getDb() {
+  const client = await getMongo();
+  return client.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp");
+}
 
 function isValidVin(v: string) {
   return typeof v === "string" && v.length === 17;
@@ -77,9 +79,9 @@ export async function POST(req: NextRequest) {
     const limit = Number(body?.limit ?? 10);
     const shopId = body?.shopId || undefined;
     const locationId = body?.locationId || undefined;
-    const refresh = Boolean(body?.refresh); // <— honor this
+    const refresh = Boolean(body?.refresh);
 
-    // pull VINs from `vehicles`
+    // Pull VINs from `vehicles`
     const q: any = {};
     if (shopId) q.shopId = shopId;
 
@@ -98,6 +100,10 @@ export async function POST(req: NextRequest) {
       skipped_invalid = 0,
       errored = 0;
 
+    // Prefer env ANALYZE_BASE, otherwise call same deployment origin
+    const origin = new URL(req.url).origin;
+    const analyzeBase = process.env.ANALYZE_BASE || origin;
+
     const tasks = vehicles.map((v) => async () => {
       const vin = (v?.vin || "").toUpperCase();
 
@@ -108,7 +114,7 @@ export async function POST(req: NextRequest) {
         return r;
       }
 
-      // check vehicleschedules for recency
+      // Check `vehicleschedules` for recency
       const existing = await db
         .collection("vehicleschedules")
         .findOne({ vin }, { projection: { updatedAt: 1 } });
@@ -125,15 +131,13 @@ export async function POST(req: NextRequest) {
         return r;
       }
 
-      // call analyzer API
+      // Call analyzer API
       const params = new URLSearchParams();
       if (locationId) params.set("locationId", locationId);
-      // cache-buster so server-side caches won't short-circuit
+      // Cache-buster so server-side caches won't short-circuit
       params.set("r", Math.random().toString(36).slice(2));
 
-      const url = `${ANALYZE_BASE}/api/maintenance/analyze/${encodeURIComponent(
-        vin
-      )}?${params.toString()}`;
+      const url = `${analyzeBase}/api/maintenance/analyze/${encodeURIComponent(vin)}?${params.toString()}`;
 
       let res: Response | null = null;
       try {
@@ -163,18 +167,14 @@ export async function POST(req: NextRequest) {
       }
 
       const data = await res.json().catch(() => ({}));
-      const items =
-        data?.analysis?.maintenance_comparison?.items || ([] as any[]);
-      const counters = items.reduce(
-        (acc: any, it: any) => {
-          const s = it?.status || "unknown";
-          acc[s] = (acc[s] || 0) + 1;
-          return acc;
-        },
-        {} as Record<string, number>
-      );
+      const items = data?.analysis?.maintenance_comparison?.items || ([] as any[]);
+      const counters = items.reduce((acc: any, it: any) => {
+        const s = it?.status || "unknown";
+        acc[s] = (acc[s] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
 
-      // upsert into vehicleschedules
+      // Upsert into vehicleschedules
       await db.collection("vehicleschedules").updateOne(
         { vin },
         {
@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
       return r;
     });
 
-    // run with limited concurrency
+    // Run with limited concurrency
     await runWithConcurrency(tasks, CONCURRENCY, (t) => t());
 
     return NextResponse.json({
