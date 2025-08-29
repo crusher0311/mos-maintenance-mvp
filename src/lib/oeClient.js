@@ -1,35 +1,34 @@
-// src/lib/oeClient.js
-
-/**
- * Fetch OE maintenance schedule for a VIN.
- * If real credentials aren't configured yet, we fall back to a stub so builds succeed.
+﻿/**
+ * OE schedule client (stubbed so builds work without real credentials).
  */
+
 export async function getOeSchedule(vin, _opts = {}) {
-  // TODO: wire up your real provider here when keys are available.
-  // Keep this branch so the API surface stays consistent.
+  // When you add a real provider, flip this check and return the live JSON.
   const hasRealProvider = !!(process.env.OE_API_BASE && process.env.OE_API_KEY);
   if (hasRealProvider) {
-    // Example shape for later:
-    // const res = await fetch(`${process.env.OE_API_BASE}/...`, { headers: { Authorization: `Bearer ${process.env.OE_API_KEY}` }});
+    // Example placeholder (keep for later wiring):
+    // const res = await fetch(`${process.env.OE_API_BASE}/schedule/${encodeURIComponent(vin)}`, {
+    //   headers: { Authorization: `Bearer ${process.env.OE_API_KEY}` }
+    // });
     // return await res.json();
   }
   return stubOe(vin);
 }
 
-/** Alias kept for compatibility with older imports */
+/** Back-compat alias some code may still import */
 export async function fetchOeSchedule(vin, opts) {
   return getOeSchedule(vin, opts);
 }
 
-/** Stub so you can keep building without keys */
+/** Minimal deterministic stub */
 export function stubOe(vin) {
   return {
     stub: true,
     vin,
     maintenance: [
-      { code: "OIL_CHANGE",      name: "Oil & Filter Change", status: "overdue" },
-      { code: "TIRE_ROTATION",   name: "Tire Rotation",       status: "soon" },
-      { code: "CABIN_AIR_FILTER",name: "Cabin Air Filter",    status: "not_yet" }
+      { code: "OIL_CHANGE",       name: "Oil & Filter Change", status: "overdue" },
+      { code: "TIRE_ROTATION",    name: "Tire Rotation",       status: "soon" },
+      { code: "CABIN_AIR_FILTER", name: "Cabin Air Filter",    status: "not_yet" }
     ]
   };
 }
