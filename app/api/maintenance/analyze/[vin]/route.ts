@@ -1,14 +1,17 @@
 // app/api/maintenance/analyze/[vin]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic"; // avoid caching in dev/prod
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-// ---------- helpers ----------
+// ---------- small helpers ----------
+const toStr = (v: any) => (typeof v === "string" ? v : v == null ? "" : String(v));
+const bool = (v?: string | null) =>
+  ["1", "true", "yes", "on"].includes(String(v ?? "").toLowerCase());
 const intParam = (v: string | null, dflt: number) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : dflt;
 };
-
 const parseOdo = (s?: string) =>
   (s ? parseInt(s.replace(/[^0-9]/g, ""), 10) : undefined);
 
@@ -20,26 +23,10 @@ type DisplayRecord = {
   text: string[];
 };
 
-type OeService = {
-  category: string;
-  name: string;
-  schedule?: { name: string } | null;
-  intervals: Array<{ miles?: number; months?: number; type: "every" | "at" }>;
-  trans_notes?: string | null;
-};
-
-const sortByDateAsc = <T extends { displayDate?: string }>(recs: T[]) =>
-  [...recs].sort(
-    (a, b) =>
-      new Date(a.displayDate || 0).getTime() -
-      new Date(b.displayDate || 0).getTime()
-  );
-
 const sortByDateDesc = <T extends { displayDate?: string }>(recs: T[]) =>
   [...recs].sort(
     (a, b) =>
-      new Date(b.displayDate || 0).getTime() -
-      new Date(a.displayDate || 0).getTime()
+      new Date(b.displayDate || 0).getTime() - new Date(a.displayDate || 0).getTime()
   );
 
 function estimateMilesPerDay(records: DisplayRecord[]): number | null {
@@ -48,15 +35,22 @@ function estimateMilesPerDay(records: DisplayRecord[]): number | null {
   );
   if (withOdo.length < 2) return null;
   const a = withOdo[0], b = withOdo[1];
-  const odoA =
-    typeof a.odometerNum === "number" ? a.odometerNum : parseOdo(a.odometer);
-  const odoB =
-    typeof b.odometerNum === "number" ? b.odometerNum : parseOdo(b.odometer);
+  const odoA = typeof a.odometerNum === "number" ? a.odometerNum : parseOdo(a.odometer);
+  const odoB = typeof b.odometerNum === "number" ? b.odometerNum : parseOdo(b.odometer);
   if (typeof odoA !== "number" || typeof odoB !== "number") return null;
   const days =
     (new Date(a.displayDate).getTime() - new Date(b.displayDate || 0).getTime()) /
     (1000 * 60 * 60 * 24);
   return days > 0 ? (odoA - odoB) / days : null;
+}
+
+function earliestDateISO(records: DisplayRecord[]): string | null {
+  if (!records.length) return null;
+  const sortedAsc = [...records].sort(
+    (a, b) => new Date(a.displayDate || 0).getTime() - new Date(b.displayDate || 0).getTime()
+  );
+  const d = sortedAsc[0]?.displayDate;
+  return d ? new Date(d).toISOString().slice(0, 10) : null;
 }
 
 function todayISO() {
@@ -97,8 +91,8 @@ async function callOpenAIJSON(prompt: string) {
       {
         role: "system",
         content:
-          "You are an automotive expert. Compare CARFAX service history with the OEM maintenance schedule. " +
-          "Use the provided current odometer and months-in-service to determine due/overdue/coming_soon/not_yet. " +
+          "You are an automotive expert. You classify ONLY the provided OEM services (not CARFAX rows). " +
+          "Use CARFAX history and current odometer/months-in-service to decide each service status. " +
           "Output strict JSON only—no explanations."
       },
       { role: "user", content: prompt },
@@ -121,64 +115,51 @@ async function callOpenAIJSON(prompt: string) {
   return JSON.parse(content);
 }
 
-// ---------- VIN extraction (path-derived only) ----------
-function extractVin(req: NextRequest): string {
-  const url = new URL(req.url);
-  const pathname = url.pathname; // /api/maintenance/analyze/<VIN>
-  const parts = pathname.split("/").filter(Boolean);
-  const vinFromPath = decodeURIComponent(parts[parts.length - 1] || "");
-  return (vinFromPath || "").trim().toUpperCase();
-}
-
-// ---------- transmission helpers ----------
-function isAutoOnly(s: OeService): boolean {
-  const n = (s.name || "").toLowerCase();
-  const tn = (s.trans_notes || "").toLowerCase();
-  return /\bautomatic\b/.test(n) || /\bautomatic\b/.test(tn);
-}
-
-function isManualOnly(s: OeService): boolean {
-  const n = (s.name || "").toLowerCase();
-  const tn = (s.trans_notes || "").toLowerCase();
-  return /\bmanual\b/.test(n) || /\bmanual\b/.test(tn);
-}
-
-function filterByTransmission(services: OeService[], trans: "" | "manual" | "automatic") {
-  if (trans === "automatic") {
-    return { filtered: services.filter(s => !isManualOnly(s)), hadSpecific: services.some(s => isAutoOnly(s) || isManualOnly(s)) };
-  }
-  if (trans === "manual") {
-    return { filtered: services.filter(s => !isAutoOnly(s)), hadSpecific: services.some(s => isAutoOnly(s) || isManualOnly(s)) };
-  }
-  // Unknown transmission: keep all, but note that some were transmission-specific
-  return { filtered: services, hadSpecific: services.some(s => isAutoOnly(s) || isManualOnly(s)) };
-}
-
-// ---------- shared handler ----------
-async function handleAnalyze(req: NextRequest) {
+// ---------- route ----------
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ vin: string }> }
+) {
   try {
-    // VIN
-    const vin = extractVin(req);
+    // ✅ Robust VIN extraction: use params if present, else parse from the URL path
+    const p = (await params) || ({} as any);
+    const segFromPath = (() => {
+      try {
+        const parts = new URL(req.url).pathname.split("/").filter(Boolean);
+        // /api/maintenance/analyze/<VIN>
+        return parts[parts.length - 1] || "";
+      } catch {
+        return "";
+      }
+    })();
+    const rawVin = toStr(p.vin || segFromPath);
+    const vin = rawVin.trim().toUpperCase();
+
     if (vin.length !== 17) {
       return NextResponse.json({ error: "VIN must be 17 characters" }, { status: 400 });
     }
-    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
-      return NextResponse.json({ error: "VIN format invalid" }, { status: 400 });
-    }
 
     const url = new URL(req.url);
+    const debugWanted = url.searchParams.has("debug");
     const odometer = intParam(url.searchParams.get("odometer"), 0);
-    const monthsInServiceQuery = url.searchParams.has("monthsInService")
-      ? intParam(url.searchParams.get("monthsInService"), 0)
-      : null;
-    const scheduleRaw = (url.searchParams.get("schedule") || "normal").toLowerCase();
-    const schedule: "normal" | "severe" = scheduleRaw === "severe" ? "severe" : "normal";
-    const transRaw = (url.searchParams.get("trans") || "").toLowerCase();
-    const trans: "" | "manual" | "automatic" =
-      transRaw === "manual" ? "manual" :
-      transRaw === "automatic" ? "automatic" : "";
-    const horizonMiles = intParam(url.searchParams.get("horizonMiles"), 1000);
-    const horizonMonths = intParam(url.searchParams.get("horizonMonths"), 1);
+
+    // optional inputs forwarded to OE endpoint
+    const schedule = (url.searchParams.get("schedule") || "normal").toLowerCase(); // normal | severe
+    const trans = toStr(url.searchParams.get("trans") ?? "");
+    const fuel = toStr(url.searchParams.get("fuel") ?? "");
+    const drivetrain = toStr(url.searchParams.get("drivetrain") ?? "");
+    const turbo = bool(url.searchParams.get("turbo")) ? "1" : "";
+    const supercharged = bool(url.searchParams.get("supercharged")) ? "1" : "";
+    const cylinders = toStr(url.searchParams.get("cylinders") ?? "");
+    const liters = toStr(url.searchParams.get("liters") ?? "");
+    const year = toStr(url.searchParams.get("year") ?? "");
+    const make = toStr(url.searchParams.get("make") ?? "");
+    const model = toStr(url.searchParams.get("model") ?? "");
+
+    const horizonMiles = intParam(url.searchParams.get("horizonMiles"), 3000);
+    const horizonMonths = intParam(url.searchParams.get("horizonMonths"), 2);
+    const comingSoonMilesWindow = Math.round(horizonMiles / 2);
+    const comingSoonDaysWindow = Math.round((horizonMonths * 30) / 2);
 
     // 1) CARFAX (local route, raw)
     const carfaxUrl = `${url.origin}/api/carfax/fetch/${vin}?raw=1`;
@@ -192,141 +173,239 @@ async function handleAnalyze(req: NextRequest) {
         }))
       : [];
 
-    // 2) Estimate months-in-service if not provided:
-    let monthsInService = monthsInServiceQuery;
-    let monthsInServiceNote: string | null = null;
-    if (monthsInService == null) {
-      const dates = sortByDateAsc(displayRecords)
-        .map(r => new Date(r.displayDate))
-        .filter(d => !isNaN(d.getTime()));
-      if (dates.length) {
-        const first = dates[0].getTime();
-        const now = Date.now();
-        const months = Math.floor((now - first) / (1000 * 60 * 60 * 24 * 30.44));
-        monthsInService = Math.max(0, months);
-        monthsInServiceNote = `Estimated months_in_service=${monthsInService} from earliest CARFAX record ${new Date(dates[0]).toISOString().slice(0,10)}.`;
-      }
-    }
-
     const mpd = estimateMilesPerDay(displayRecords) ?? 30;
+    const firstDate = earliestDateISO(displayRecords);
+    const monthsInService =
+      firstDate ? Math.max(0, Math.round((Date.now() - new Date(firstDate).getTime()) / (1000 * 60 * 60 * 24 * 30))) : null;
 
-    // 3) OE services via Next proxy (mock or real)
-    const oeUrl = `${url.origin}/api/oe/fetch/${vin}?schedule=${encodeURIComponent(schedule)}`;
+    // 2) OE services via our Next proxy (Mongo-backed)
+    const qsCore = new URLSearchParams({
+      schedule,
+      ...(fuel ? { fuel } : {}),
+      ...(trans ? { trans } : {}),
+      ...(drivetrain ? { drivetrain } : {}),
+      ...(turbo ? { turbo: "1" } : {}),
+      ...(supercharged ? { supercharged: "1" } : {}),
+      ...(cylinders ? { cylinders } : {}),
+      ...(liters ? { liters } : {}),
+      ...(year ? { year } : {}),
+      ...(make ? { make } : {}),
+      ...(model ? { model } : {}),
+    }).toString();
+
+    const oeUrl = `${url.origin}/api/oe/fetch/${vin}?${qsCore}${debugWanted ? "&explain=1" : ""}`;
     const oeRes = await getJson<any>(oeUrl);
     const oeBody = oeRes.body;
-    const oeServicesAll: OeService[] = Array.isArray(oeBody?.services) ? oeBody.services : [];
+    const oeServices = Array.isArray(oeBody?.services) ? oeBody.services : [];
 
-    // 3a) Filter services by transmission
-    const { filtered: oeServices, hadSpecific } = filterByTransmission(oeServicesAll, trans);
+    // Build the list of services we will classify
+    const allowedServices = [...new Set(
+      oeServices
+        .map((s: any) => toStr(s?.name).trim())
+        .filter((n) => n.length > 0)
+    )];
 
-    // 3b) Adjust "coming soon" windows for severe schedule (tighter)
-    const SEVERE_SCALE = 0.75;
-    const comingSoonMilesWindow = schedule === "severe" ? Math.max(500, Math.round(1500 * SEVERE_SCALE)) : 1500;
-    const comingSoonDaysWindow  = schedule === "severe" ? Math.max(15,  Math.round(60   * SEVERE_SCALE)) : 60;
+    if (!allowedServices.length) {
+      return NextResponse.json(
+        {
+          error: "No OEM services available for classification",
+          hint:
+            "Check /api/oe/fetch filters (fuel, trans, drivetrain, year/make/model) or your Mongo data mapping.",
+          vin,
+          forwardedFilters: {
+            schedule,
+            fuel,
+            trans,
+            drivetrain,
+            turbo: !!turbo,
+            supercharged: !!supercharged,
+            cylinders,
+            liters,
+            year,
+            make,
+            model,
+          },
+        },
+        { status: 424 }
+      );
+    }
 
-    // 4) Build prompt for OpenAI
+    // 3) Build strict prompt for OpenAI
     const promptObj = {
       instructions: {
         current_date: todayISO(),
         current_odometer_miles: odometer,
         months_in_service: monthsInService,
         miles_per_day_estimate: mpd,
-        schedule_mode: schedule,
-        transmission: trans || null,
+        schedule_mode: schedule, // normal | severe
+        transmission: trans || null, // manual | automatic | null
         horizon_miles: horizonMiles,
         horizon_months: horizonMonths,
         coming_soon_miles_window: comingSoonMilesWindow,
         coming_soon_days_window: comingSoonDaysWindow,
         classify_into: ["overdue", "due", "coming_soon", "not_yet"],
+        rules: [
+          "You MUST classify only services listed in services_to_classify.",
+          "Never output CARFAX lines as services.",
+          "If an OE service is transmission-specific, only apply if trans matches or not specified.",
+          "Every-intervals: use current_odometer and months_in_service to decide due/overdue.",
+          "At-intervals: due at threshold; overdue if surpassed.",
+          "coming_soon means within the horizon window (miles or months).",
+        ],
       },
-      carfax_display_records: displayRecords,
-      oe_schedule: {
-        vin: oeBody?.vin ?? vin,
-        year: oeBody?.year ?? null,
-        make: oeBody?.make ?? null,
-        model: oeBody?.model ?? null,
-        services: oeServices.map((s: OeService) => ({
-          category: s.category,
-          name: s.name,
-          schedule: s?.schedule?.name ?? null,
-          intervals: s.intervals,
-          trans_notes: s.trans_notes ?? null,
-        })),
-      },
+      services_to_classify: allowedServices,
+      carfax_display_records: displayRecords, // history only
     };
 
     const prompt =
-      `Compare CARFAX records to the provided OEM schedule and classify each service item. ` +
-      `Return ONLY JSON with shape: { maintenance_comparison: { items: Array<{service, status}>, warnings?: string[], source_notes?: string[] } }.\n\n` +
+      `Classify ONLY the services in services_to_classify. Return EXACT shape:\n` +
+      `{\n  "maintenance_comparison": {\n    "items": Array<{ "service": string, "status": "overdue"|"due"|"coming_soon"|"not_yet" }>,\n    "warnings"?: string[],\n    "source_notes"?: string[]\n  }\n}\n\n` +
       JSON.stringify(promptObj, null, 2);
 
-    // 5) OpenAI
+    // 4) OpenAI
     let analysis = await callOpenAIJSON(prompt);
 
-    // 6) Attach source notes/warnings
+    // Normalize & enforce allowed services only
+    const items: Array<{ service: string; status: string }> =
+      Array.isArray(analysis?.maintenance_comparison?.items)
+        ? analysis.maintenance_comparison.items
+        : [];
+
+    const allowedSet = new Set(allowedServices.map((s) => s.toLowerCase()));
+    const sanitized = items
+      .filter((it) => allowedSet.has(toStr(it.service).toLowerCase()))
+      .map((it) => ({ service: toStr(it.service), status: toStr(it.status).toLowerCase() }));
+
+    // Replace items with sanitized list
     analysis.maintenance_comparison ||= {};
+    analysis.maintenance_comparison.items = sanitized;
     analysis.maintenance_comparison.source_notes = [
       ...(analysis.maintenance_comparison.source_notes || []),
-      "Included DataOne OE schedule (cached) via Express API.",
+      "Included OE schedule via /api/oe/fetch with forwarded filters.",
     ];
-    if (schedule === "severe") {
-      analysis.maintenance_comparison.source_notes.push(
-        `Severe schedule applied: coming-soon windows tightened to ${comingSoonMilesWindow} miles / ${comingSoonDaysWindow} days.`
-      );
-    }
-    if (monthsInServiceNote) {
-      analysis.maintenance_comparison.source_notes.push(monthsInServiceNote);
-    }
     if (!carfaxRes.ok) {
       analysis.maintenance_comparison.warnings = [
         ...(analysis.maintenance_comparison.warnings || []),
         `CARFAX fetch failed (${carfaxRes.status}); classification relies more heavily on OEM schedule & inputs.`,
       ];
     }
-    if (!trans && hadSpecific) {
-      analysis.maintenance_comparison.warnings = [
-        ...(analysis.maintenance_comparison.warnings || []),
-        "Some services are transmission-specific. Set ?trans=automatic or ?trans=manual for more precise results.",
-      ];
-    }
 
-    // 7) Count statuses for convenience
-    const items: Array<{ service: string; status: string }> =
-      analysis?.maintenance_comparison?.items ?? [];
-    const counts = items.reduce((acc, it) => {
+    // Count statuses
+    const counts = sanitized.reduce((acc, it) => {
       const k = String(it.status || "unknown").toUpperCase();
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    return NextResponse.json(
-      {
-        vin,
-        inputs: {
-          odometer,
-          monthsInService,
-          schedule,
-          trans,
-          horizonMiles,
-          horizonMonths,
-          milesPerDayUsed: mpd,
-          comingSoonMilesWindow,
-          comingSoonDaysWindow,
-        },
-        analysis,
-        counts
+    // Inputs bundle (also reused in debug)
+    const inputs = {
+      odometer,
+      monthsInService,
+      schedule,
+      trans,
+      fuel,
+      drivetrain,
+      horizonMiles,
+      horizonMonths,
+      milesPerDayUsed: mpd,
+      comingSoonMilesWindow,
+      comingSoonDaysWindow,
+    };
+
+    // Base response
+    const resp: any = {
+      vin,
+      inputs,
+      oe_summary: {
+        total_services: allowedServices.length,
+        names: allowedServices.slice(0, 50),
       },
-      { status: 200 }
-    );
+      analysis,
+      counts,
+    };
+
+    // ---- DEBUG INSPECTOR (optional via ?debug=1) ----
+    if (debugWanted) {
+      try {
+        // OE snapshot
+        const oeSnapshot = {
+          source: oeBody?.source ?? undefined,
+          totalBefore: oeBody?.totalBefore ?? (oeServices?.length ?? null),
+          totalAfter: oeBody?.totalAfter ?? null,
+          filtersApplied: oeBody?.filtersApplied ?? null,
+          sampleServices: Array.isArray(oeServices) ? oeServices.slice(0, 5) : null,
+          explain: Array.isArray(oeBody?.explain) ? oeBody.explain.slice(0, 10) : oeBody?.explain ?? null,
+        };
+
+        // Carfax snapshot
+        const cf = carfaxRes.body || null;
+        const carfaxSnapshot = {
+          ok: carfaxRes.ok,
+          status: carfaxRes.status,
+          hasRaw: !!cf,
+          topLevelKeys: cf ? Object.keys(cf).slice(0, 15) : [],
+          serviceHistoryKeys: cf?.serviceHistory ? Object.keys(cf.serviceHistory) : [],
+          sampleDisplayRecords: Array.isArray(cf?.serviceHistory?.displayRecords)
+            ? cf.serviceHistory.displayRecords.slice(0, 5)
+            : null,
+        };
+
+        // Autoflow / DVI from Mongo (recent samples)
+        let autoflowSnapshot: any = {};
+        try {
+          const { getDb } = await import("@/lib/mongo");
+          const db = await getDb();
+          const dviCol = db.collection("inspectionfindings");
+          const evtCol = db.collection("serviceevents");
+
+          const dviDocs = await dviCol.find({ vin }).sort({ created_at: -1 }).limit(10).toArray();
+          const afDocs = await evtCol
+            .find({ vin, source: { $in: ["autoflow", "AF", "autoflow_webhook"] } })
+            .sort({ created_at: -1 })
+            .limit(10)
+            .toArray();
+
+          autoflowSnapshot = {
+            dvi_count: dviDocs.length,
+            dvi_sample: dviDocs.slice(0, 5),
+            events_count: afDocs.length,
+            events_sample: afDocs.slice(0, 5),
+          };
+        } catch (e: any) {
+          autoflowSnapshot = { error: e?.message || String(e) };
+        }
+
+        // What the classifier actually saw
+        const classificationInputs = {
+          services_to_classify_count: allowedServices.length,
+          services_to_classify_sample: allowedServices.slice(0, 10),
+          carfax_records_used: displayRecords.length,
+        };
+
+        resp._debug = {
+          inputs,
+          source_notes: resp?.analysis?.maintenance_comparison?.source_notes ?? [],
+          oe: oeSnapshot,
+          carfax: carfaxSnapshot,
+          autoflow: autoflowSnapshot,
+          classification_inputs: classificationInputs,
+        };
+      } catch (e: any) {
+        resp._debug_error = e?.message || String(e);
+      }
+    }
+    // ---- /DEBUG INSPECTOR ----
+
+    return NextResponse.json(resp, { status: 200 });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
   }
 }
 
-// ---------- route wrappers (no params usage) ----------
-export async function GET(req: NextRequest) {
-  return handleAnalyze(req);
-}
-export async function POST(req: NextRequest) {
-  return handleAnalyze(req);
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ vin: string }> }
+) {
+  // Reuse POST handler (with awaited params)
+  return POST(req, ctx as any);
 }
