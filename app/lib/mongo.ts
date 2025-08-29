@@ -1,15 +1,17 @@
-@'
 import { MongoClient, Db } from "mongodb";
 
 const URI =
-  process.env.MONGODB_URI ||
-  process.env.MONGO_URL ||
+  process.env.MONGODB_URI ??
+  process.env.MONGO_URL ??
   "mongodb://127.0.0.1:27017";
 
-const DB_NAME =
-  process.env.MONGODB_DB ||
-  process.env.DB_NAME ||
+const DEFAULT_DB =
+  process.env.MONGODB_DB ??
+  process.env.DB_NAME ??
   "mos-maintenance-mvp";
+
+// Optional separate DB for DataOne lookups. Falls back to DEFAULT_DB.
+const DATAONE_DB = process.env.DATAONE_DB ?? DEFAULT_DB;
 
 let _client: MongoClient | null = null;
 let _connecting: Promise<MongoClient> | null = null;
@@ -37,9 +39,14 @@ export async function getMongo(): Promise<MongoClient> {
   return connect();
 }
 
-/** Return a Db instance (compat for code importing { getDb }) */
-export async function getDb(): Promise<Db> {
+/** Return a Db instance (defaults to your main app DB) */
+export async function getDb(name: string = DEFAULT_DB): Promise<Db> {
   const client = await connect();
-  return client.db(DB_NAME);
+  return client.db(name);
 }
-'@ | Set-Content -Encoding UTF8 app\lib\mongo.ts
+
+/** DataOne DB helper (used by /api/dataone/* routes) */
+export async function getDataOneDb(): Promise<Db> {
+  const client = await connect();
+  return client.db(DATAONE_DB);
+}
