@@ -113,13 +113,14 @@ function normalizeOePayload(vin, raw) {
 /** Stub so you can keep building without keys */
 function stubOe(vin) {
   const raw = {
-    stub: true,
-    vin,
-    maintenance: [
-      { code: "OIL_CHANGE", name: "Oil & Filter Change", status: "overdue" },
-      { code: "TIRE_ROTATION", name: "Tire Rotation", status: "soon" },
-      { code: "CABIN_AIR_FILTER", name: "Cabin Air Filter", status: "not_yet" },
-    ],
+    "stub": true,
+    "vin": vin,
+    "maintenance": [
+      { "code": "OIL_CHANGE", "name": "Oil & Filter Change", "status": "overdue" },
+      { "code": "TIRE_ROTATION", "name": "Tire Rotation", "status": "soon" },
+      { "code": "CABIN_AIR_FILTER", "name": "Cabin Air Filter", "status": "not_yet" }
+    ]
   };
   return raw;
 }
+
