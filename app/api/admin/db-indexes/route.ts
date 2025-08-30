@@ -1,38 +1,51 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 
-// ...imports and headers remain the same...
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/**
+ * POST /api/admin/db-indexes
+ * Header required: X-Admin-Token
+ *
+ * Idempotent setup:
+ * 1) Ensure unique index on shops.shopId
+ * 2) Ensure (optional) index on credentials.autoflow.apiKey
+ * 3) Set counters.shopId.seq = max(existing numeric shopId) so the next created shop gets max+1
+ */
 export async function POST(req: NextRequest) {
   const admin = req.headers.get("x-admin-token");
-  if (!admin) return NextResponse.json({ error: "Missing X-Admin-Token" }, { status: 401 });
+  if (!admin) {
+    return NextResponse.json({ error: "Missing X-Admin-Token" }, { status: 401 });
+  }
 
   try {
     const db = await getDb();
     const shops = db.collection("shops");
     const counters = db.collection("counters");
 
+    // 1) Unique index on numeric shopId
     await shops.createIndex({ shopId: 1 }, { unique: true, name: "shopId_unique" });
+
+    // 2) Helpful provider lookup index (not unique)
     await shops.createIndex(
       { "credentials.autoflow.apiKey": 1 },
       { name: "autoflow_apiKey_idx", sparse: true }
     );
 
-    // Find the current max numeric shopId
+    // 3) Compute current max numeric shopId
     const maxDoc = await shops
       .find({ shopId: { $type: "number" } }, { projection: { shopId: 1 } })
       .sort({ shopId: -1 })
       .limit(1)
       .next();
 
-    const maxExisting = Number.isFinite(maxDoc?.shopId) ? maxDoc!.shopId : 0;
+    const maxExisting = Number.isFinite(maxDoc?.shopId) ? (maxDoc!.shopId as number) : 0;
 
-    // We want the VERY NEXT id to be maxExisting+1.
-    // Set the counter's seq to at least 1, but not below maxExisting.
-    const targetSeq = Math.max(1, maxExisting);
-
+    // Set counter to maxExisting so the next getNextShopId() returns maxExisting + 1
     await counters.updateOne(
       { _id: "shopId" },
-      { $set: { seq: targetSeq }, $setOnInsert: { _id: "shopId" } },
+      { $set: { seq: maxExisting }, $setOnInsert: { _id: "shopId" } },
       { upsert: true }
     );
 
