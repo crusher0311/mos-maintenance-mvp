@@ -58,3 +58,4 @@ ngrok.log
 # ---- local data (do NOT commit) ----
 .dataone_work/
 DataOne_US_LDV_Data.zip
+`r`n.dataone_work/

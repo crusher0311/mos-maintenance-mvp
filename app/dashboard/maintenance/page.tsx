@@ -1,13 +1,13 @@
 // /app/dashboard/maintenance/page.tsx
 import React from "react";
-import { getDb } from "../../lib/mongo";
+import { getMongo } from "../../lib/mongo";
 
 export const dynamic = "force-dynamic";
 
 type Row = {
   vin: string;
   shopId?: string | null;
-  updatedAt: string | Date;
+  updatedAt: string | Date | number;
   counters?: Record<string, number>;
   result?: {
     make?: string;
@@ -24,9 +24,9 @@ type Row = {
 };
 
 export default async function Page() {
-  const db = await getDb();
+  const client = await getMongo();
+  const db = client.db(process.env.MONGODB_DB || process.env.DB_NAME || "mos-maintenance-mvp");
 
-  // Latest 100 analysis docs from vehicleschedules
   const docs = (await db
     .collection("vehicleschedules")
     .find({}, { projection: { _id: 0 } })
@@ -34,7 +34,6 @@ export default async function Page() {
     .limit(100)
     .toArray()) as unknown as Row[];
 
-  // Totals across all rows
   const totals = docs.reduce((acc, r) => {
     const c = r.counters || {};
     for (const k of Object.keys(c)) acc[k] = (acc[k] || 0) + (c[k] || 0);
@@ -71,10 +70,13 @@ export default async function Page() {
               const veh = r.result || {};
               const vehicle = [veh?.year, veh?.make, veh?.model].filter(Boolean).join(" ") || "—";
               const counts = r.counters || {};
-              const updated =
-                typeof r.updatedAt === "string"
-                  ? new Date(r.updatedAt).toLocaleString()
-                  : (r.updatedAt as Date).toLocaleString();
+              const dt =
+                typeof r.updatedAt === "number"
+                  ? new Date(r.updatedAt)
+                  : typeof r.updatedAt === "string"
+                  ? new Date(r.updatedAt)
+                  : (r.updatedAt as Date);
+              const updated = dt.toLocaleString();
 
               const badge = (label: string) => (
                 <span
@@ -97,7 +99,7 @@ export default async function Page() {
                   <td className="px-3 py-2">
                     <a
                       className="text-xs rounded-lg border border-slate-300 px-3 py-1 hover:bg-slate-100"
-                      href={`/vehicles/${encodeURIComponent(r.vin)}/maintenance`}
+                      href={`/vehicle/${encodeURIComponent(r.vin)}`}
                       target="_blank"
                     >
                       View

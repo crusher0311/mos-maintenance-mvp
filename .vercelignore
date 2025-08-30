@@ -1,0 +1,21 @@
+﻿# --- ignore heavy local data (causes 100MB upload errors) ---
+.dataone_work/**
+
+# --- never upload local builds/deps ---
+node_modules/**
+.next/**
+dist/**
+build/**
+out/**
+.vercel/output/**
+
+# --- misc ---
+*.log
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.bson
+*.sqlite
