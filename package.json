@@ -1,41 +1,40 @@
 {
-    "name":  "mos-maintenance-mvp",
-    "version":  "0.1.0",
-    "private":  true,
-    "scripts":  {
-                    "dev":  "next dev",
-                    "build":  "next build --turbopack",
-                    "start":  "next start",
-                    "lint":  "eslint",
-                    "vercel-build":  "prisma generate \u0026\u0026 next build --turbopack"
-                },
-    "dependencies":  {
-                         "@auth/mongodb-adapter":  "^3.10.0",
-                         "bcrypt":  "^6.0.0",
-                         "csv-parse":  "^6.1.0",
-                         "dotenv":  "^17.2.1",
-                         "express":  "^5.1.0",
-                         "lucide-react":  "^0.541.0",
-                         "mongodb":  "^6.19.0",
-                         "mongoose":  "^8.18.0",
-                         "next":  "15.5.0",
-                         "next-auth":  "^4.24.11",
-                         "prisma":  "^6.15.0",
-                         "react":  "19.1.0",
-                         "react-dom":  "19.1.0",
-                         "ssh2-sftp-client":  "^12.0.1",
-                         "unzipper":  "^0.12.3",
-                         "zod":  "^4.0.17"
-                     },
-    "devDependencies":  {
-                            "@eslint/eslintrc":  "^3",
-                            "@tailwindcss/postcss":  "^4.1.12",
-                            "@types/node":  "24.3.0",
-                            "@types/react":  "19.1.11",
-                            "autoprefixer":  "^10.4.21",
-                            "eslint":  "^9",
-                            "eslint-config-next":  "15.5.0",
-                            "postcss":  "^8.5.6",
-                            "tailwindcss":  "^4.1.12"
-                        }
+    "name": "mos-maintenance-mvp",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build --turbopack",
+        "start": "next start",
+        "lint": "eslint",
+        "vercel-build": "next build --turbopack"
+    },
+    "dependencies": {
+        "@auth/mongodb-adapter": "^3.10.0",
+        "bcrypt": "^6.0.0",
+        "csv-parse": "^6.1.0",
+        "dotenv": "^17.2.1",
+        "express": "^5.1.0",
+        "lucide-react": "^0.541.0",
+        "mongodb": "^6.19.0",
+        "mongoose": "^8.18.0",
+        "next": "15.5.0",
+        "next-auth": "^4.24.11",
+        "react": "19.1.0",
+        "react-dom": "19.1.0",
+        "ssh2-sftp-client": "^12.0.1",
+        "unzipper": "^0.12.3",
+        "zod": "^4.0.17"
+    },
+    "devDependencies": {
+        "@eslint/eslintrc": "^3",
+        "@tailwindcss/postcss": "^4.1.12",
+        "@types/node": "24.3.0",
+        "@types/react": "19.1.11",
+        "autoprefixer": "^10.4.21",
+        "eslint": "^9",
+        "eslint-config-next": "15.5.0",
+        "postcss": "^8.5.6",
+        "tailwindcss": "^4.1.12"
+    }
 }

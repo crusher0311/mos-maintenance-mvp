@@ -1,21 +1,20 @@
-﻿# --- ignore heavy local data (causes 100MB upload errors) ---
-.dataone_work/**
-
-# --- never upload local builds/deps ---
-node_modules/**
-.next/**
-dist/**
-build/**
-out/**
-.vercel/output/**
-
-# --- misc ---
+# build artifacts  never upload
+.next
+.vercel/output
+dist
+build
+out
+coverage
 *.log
+**/*.log
 *.zip
-*.tar
-*.tar.gz
 *.tgz
-*.7z
-*.rar
-*.bson
-*.sqlite
+tmp
+temp
+# archives / large local data
+_archive
+_archive/**
+**/_archive/**
+
+# deps (usually ignored by Vercel anyway, but safe to include)
+node_modules
