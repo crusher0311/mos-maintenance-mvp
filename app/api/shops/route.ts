@@ -1,33 +1,58 @@
-﻿import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/mongo";
+﻿// app/api/shops/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
+import { getDb } from "@/lib/mongo";
+import { getNextShopId } from "@/lib/ids";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function id(n=12) { return crypto.randomBytes(n).toString("hex"); }
-
-export async function GET() {
-  const db = await getDb();
-  const rows = await db.collection("shops")
-    .find({}, { projection: { _id: 0, shopId: 1, name: 1, "autoflow.webhookToken": 1 } })
-    .sort({ name: 1 }).toArray();
-  return NextResponse.json({ shops: rows });
-}
-
+/**
+ * POST /api/shops
+ * Body: { name: string }
+ * Returns: { shop: { shopId: number, name: string, webhookToken: string } }
+ */
 export async function POST(req: NextRequest) {
-  const db = await getDb();
-  const body = await req.json().catch(() => ({} as any));
-  const name = (body?.name || "").toString().trim();
-  if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
+  try {
+    const { name } = await req.json();
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return NextResponse.json({ error: "Missing name" }, { status: 400 });
+    }
 
-  const shopId = id(6);
-  const webhookToken = id(12);
-  const doc = {
-    shopId, name,
-    autoflow: { apiKey: null as string|null, apiBase: null as string|null, webhookToken },
-    createdAt: Date.now(), updatedAt: Date.now(),
-  };
-  await db.collection("shops").insertOne(doc as any);
-  return NextResponse.json({ shop: { shopId, name, webhookToken } }, { status: 201 });
+    const db = await getDb();
+    const shops = db.collection("shops");
+
+    // 1) Generate human-friendly numeric ID
+    const numericId = await getNextShopId(); // starts >= 10001 (seeded in Step 1)
+
+    // 2) Secure, unguessable webhook token
+    const webhookToken = crypto.randomBytes(12).toString("hex");
+
+    // 3) Insert document
+    const now = new Date();
+    const doc = {
+      shopId: numericId, // numeric, unique (enforced by index)
+      name: name.trim(),
+      webhookToken,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await shops.insertOne(doc);
+
+    // 4) Return Tekmetric-style id + token
+    return NextResponse.json({
+      shop: { shopId: numericId, name: doc.name, webhookToken },
+    });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message || "Unknown error" },
+      { status: 500 }
+    );
+  }
 }
+
+/**
+ * (Optional) Keep your existing GET handler if you have one.
+ * You can also add a simple GET here that lists shops, but it’s not required for Step 2.
+ */
