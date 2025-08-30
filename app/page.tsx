@@ -2,19 +2,22 @@
 
 import { useState } from "react";
 
-type CreateShopResp = { shopId: string; webhookToken: string };
-
 export default function Home() {
   const [shopName, setShopName] = useState("");
   const [shopId, setShopId] = useState("");
   const [webhookToken, setWebhookToken] = useState("");
+
+  // AutoFlow-style creds
   const [apiKey, setApiKey] = useState("");
+  const [apiPassword, setApiPassword] = useState("");
   const [apiBase, setApiBase] = useState("");
+
   const [adminToken, setAdminToken] = useState("");
   const [log, setLog] = useState<string>("");
 
   const logLine = (m: string) => setLog((prev) => `${m}\n${prev}`);
 
+  // Create shop (fix parsing for { shop: {...} })
   async function createShop() {
     try {
       const res = await fetch("/api/shops", {
@@ -22,23 +25,32 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: shopName }),
       });
-      const data = (await res.json()) as CreateShopResp;
+      const data = await res.json(); // { shop: { shopId, name, webhookToken } }
       if (!res.ok) throw new Error(JSON.stringify(data));
-      setShopId(data.shopId);
-      setWebhookToken(data.webhookToken);
-      logLine(`✅ Shop created: ${data.shopId}`);
+
+      const sid = data?.shop?.shopId;
+      const wt = data?.shop?.webhookToken;
+      if (!sid) throw new Error("Server did not return shop.shopId");
+
+      setShopId(sid);
+      setWebhookToken(wt || "");
+      logLine(`✅ Shop created: ${sid}`);
     } catch (e: any) {
       logLine(`❌ Create Shop failed: ${e.message || e}`);
     }
   }
 
+  // Save AutoFlow credentials
   async function saveCreds() {
     try {
       if (!shopId) throw new Error("Create or enter a Shop ID first");
+      const body: Record<string, string> = { apiKey, apiPassword };
+      if (apiBase) body.apiBase = apiBase;
+
       const res = await fetch(`/api/shops/${shopId}/credentials`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, apiBase }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(data));
@@ -48,6 +60,7 @@ export default function Home() {
     }
   }
 
+  // Test webhook
   async function testWebhook() {
     try {
       const token = webhookToken || prompt("Enter webhook token") || "";
@@ -65,6 +78,7 @@ export default function Home() {
     }
   }
 
+  // Admin: create DB indexes
   async function createIndexes() {
     try {
       if (!adminToken) throw new Error("Admin token required");
@@ -106,27 +120,33 @@ export default function Home() {
 
       {/* Credentials */}
       <section className="rounded-2xl border p-5 space-y-3">
-        <h2 className="text-lg font-semibold">2) Save Credentials</h2>
+        <h2 className="text-lg font-semibold">2) Save AutoFlow Credentials</h2>
         <input
           className="w-full border rounded p-2"
           placeholder="Shop ID (or use above)"
           value={shopId}
           onChange={(e) => setShopId(e.target.value)}
         />
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2">
           <input
-            className="flex-1 border rounded p-2"
+            className="border rounded p-2"
             placeholder="API Key"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
           <input
-            className="flex-1 border rounded p-2"
-            placeholder="API Base (https://api.example.com)"
+            className="border rounded p-2"
+            placeholder="API Password"
+            value={apiPassword}
+            onChange={(e) => setApiPassword(e.target.value)}
+          />
+          <input
+            className="border rounded p-2"
+            placeholder="API Base (optional, e.g. https://api.autoflow.com)"
             value={apiBase}
             onChange={(e) => setApiBase(e.target.value)}
           />
-          <button className="rounded bg-black text-white px-4 py-2" onClick={saveCreds}>
+          <button className="self-start rounded bg-black text-white px-4 py-2" onClick={saveCreds}>
             Save
           </button>
         </div>
