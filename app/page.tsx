@@ -1,10 +1,14 @@
-import Link from "next/link";
-
-export default function Home() {
+﻿export default function Home() {
   return (
-    <main className="p-6">
-      <h1 className="text-xl font-semibold mb-4">MOS Maintenance MVP</h1>
-      <p><Link href="/dashboard" className="text-blue-600 underline">Go to Dashboard</Link></p>
+    <main>
+      <h1>MOS Maintenance  MVP</h1>
+      <ul>
+        <li><code>GET /api/ping</code></li>
+        <li><code>POST /api/shops</code> {"{ name }"}  returns <code>shopId</code> & <code>webhookToken</code></li>
+        <li><code>PUT /api/shops/[shopId]/credentials</code> {"{ apiKey, apiBase }"}</li>
+        <li><code>POST /api/webhooks/autoflow/[token]</code> (use the shops <code>webhookToken</code>)</li>
+        <li><code>POST /api/admin/db-indexes</code> (requires <code>X-Admin-Token</code>)</li>
+      </ul>
     </main>
   );
 }

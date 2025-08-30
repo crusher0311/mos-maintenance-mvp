@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import AutoRefresh from "./AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +8,14 @@ export default async function DashboardPage() {
     prisma.vehicle.findMany({
       orderBy: { updatedAt: "desc" },
       take: 20,
-      select: { vin: true, year: true, make: true, model: true, odometer: true, updatedAt: true },
+      select: {
+        vin: true,
+        year: true,
+        make: true,
+        model: true,
+        odometer: true,
+        updatedAt: true,
+      },
     }),
     prisma.serviceRecommendation.groupBy({
       by: ["status"],
@@ -20,12 +28,15 @@ export default async function DashboardPage() {
 
   return (
     <main className="p-6 space-y-6">
+      {/* auto-refresh every 10s */}
+      <AutoRefresh intervalMs={10000} />
+
       <h1 className="text-2xl font-semibold">Maintenance Dashboard</h1>
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {["OVERDUE","DUE","COMING_SOON","NOT_YET"].map((k) => (
+        {["OVERDUE", "DUE", "COMING_SOON", "NOT_YET"].map((k) => (
           <div key={k} className="rounded-2xl border p-4 shadow-sm">
-            <div className="text-sm text-gray-500">{k.replace("_"," ")}</div>
+            <div className="text-sm text-gray-500">{k.replace("_", " ")}</div>
             <div className="text-2xl font-bold">{counts[k] ?? 0}</div>
           </div>
         ))}
@@ -46,20 +57,33 @@ export default async function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {vehicles.map(v => (
+              {vehicles.map((v) => (
                 <tr key={v.vin} className="border-t hover:bg-gray-50">
                   <td className="p-3">
-                    <a className="text-blue-600 hover:underline" href={`/vehicle/${v.vin}`}>{v.vin}</a>
+                    <a
+                      className="text-blue-600 hover:underline"
+                      href={`/vehicle/${v.vin}`}
+                    >
+                      {v.vin}
+                    </a>
                   </td>
                   <td className="p-3">{v.year ?? "-"}</td>
                   <td className="p-3">{v.make ?? "-"}</td>
                   <td className="p-3">{v.model ?? "-"}</td>
-                  <td className="p-3">{v.odometer?.toLocaleString() ?? "-"}</td>
-                  <td className="p-3">{new Date(v.updatedAt).toLocaleString()}</td>
+                  <td className="p-3">
+                    {v.odometer?.toLocaleString() ?? "-"}
+                  </td>
+                  <td className="p-3">
+                    {new Date(v.updatedAt).toLocaleString()}
+                  </td>
                 </tr>
               ))}
               {!vehicles.length && (
-                <tr><td colSpan={6} className="p-4 text-center text-gray-500">No vehicles yet—send a webhook.</td></tr>
+                <tr>
+                  <td colSpan={6} className="p-4 text-center text-gray-500">
+                    No vehicles yet—send a webhook.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
