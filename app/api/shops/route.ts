@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     const webhookToken = crypto.randomBytes(12).toString("hex");
     const now = new Date();
 
-    // Try a few times in case the counter was lagging and we hit a duplicate
+    // Retry a few times in case we ever collide (e.g., counter was lagging)
     const MAX_TRIES = 5;
     for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
       const numericId = await getNextShopId(); // should be >= 10001 after admin sync
@@ -42,11 +42,10 @@ export async function POST(req: NextRequest) {
           shop: { shopId: numericId, name: doc.name, webhookToken },
         });
       } catch (err: any) {
-        // 11000 = duplicate key
         if (err?.code === 11000 && attempt < MAX_TRIES) {
-          continue; // grab next id and retry
+          // duplicate key – try the next id
+          continue;
         }
-        // bubble anything else
         throw err;
       }
     }
