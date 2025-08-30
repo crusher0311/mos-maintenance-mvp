@@ -17,7 +17,16 @@ export default function Home() {
 
   const logLine = (m: string) => setLog((prev) => `${m}\n${prev}`);
 
-  // Create shop (fix parsing for { shop: {...} })
+  // Build a copyable Webhook URL (client-side origin)
+  const baseUrl =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : process.env.NEXT_PUBLIC_BASE_URL || "";
+  const webhookUrl = webhookToken
+    ? `${baseUrl}/api/webhooks/autoflow/${webhookToken}`
+    : "";
+
+  // Create shop (parse { shop: {...} })
   async function createShop() {
     try {
       const res = await fetch("/api/shops", {
@@ -27,13 +36,12 @@ export default function Home() {
       });
       const data = await res.json(); // { shop: { shopId, name, webhookToken } }
       if (!res.ok) throw new Error(JSON.stringify(data));
-
       const sid = data?.shop?.shopId;
-      const wt = data?.shop?.webhookToken;
+      const wt = data?.shop?.webhookToken || "";
       if (!sid) throw new Error("Server did not return shop.shopId");
 
-      setShopId(sid);
-      setWebhookToken(wt || "");
+      setShopId(String(sid));
+      setWebhookToken(wt);
       logLine(`✅ Shop created: ${sid}`);
     } catch (e: any) {
       logLine(`❌ Create Shop failed: ${e.message || e}`);
@@ -60,7 +68,7 @@ export default function Home() {
     }
   }
 
-  // Test webhook
+  // Test webhook (sends a fake event directly to your endpoint)
   async function testWebhook() {
     try {
       const token = webhookToken || prompt("Enter webhook token") || "";
@@ -112,9 +120,36 @@ export default function Home() {
             Create
           </button>
         </div>
+
         <div className="text-sm text-gray-700 space-y-1">
           <div>Shop ID: <code>{shopId}</code></div>
           <div>Webhook Token: <code>{webhookToken}</code></div>
+
+          {/* Copyable Webhook URL for AutoFlow */}
+          {webhookToken && (
+            <div className="mt-2">
+              <div className="font-medium">Webhook URL for AutoFlow:</div>
+              <div className="flex gap-2 items-center">
+                <input className="w-full border rounded p-2" value={webhookUrl} readOnly />
+                <button
+                  className="rounded bg-black text-white px-3 py-2"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(webhookUrl);
+                      logLine("✅ Copied webhook URL");
+                    } catch {
+                      logLine("❌ Copy failed");
+                    }
+                  }}
+                >
+                  Copy
+                </button>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                Paste this into AutoFlow’s Webhook/Callback URL for this shop.
+              </div>
+            </div>
+          )}
         </div>
       </section>
 

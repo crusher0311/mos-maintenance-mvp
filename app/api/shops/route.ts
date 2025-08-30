@@ -1,5 +1,4 @@
-﻿// app/api/shops/route.ts
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { getDb } from "@/lib/mongo";
 import { getNextShopId } from "@/lib/ids";
@@ -22,28 +21,40 @@ export async function POST(req: NextRequest) {
     const db = await getDb();
     const shops = db.collection("shops");
 
-    // 1) Generate human-friendly numeric ID
-    const numericId = await getNextShopId(); // starts >= 10001 (seeded in Step 1)
-
-    // 2) Secure, unguessable webhook token
     const webhookToken = crypto.randomBytes(12).toString("hex");
-
-    // 3) Insert document
     const now = new Date();
-    const doc = {
-      shopId: numericId, // numeric, unique (enforced by index)
-      name: name.trim(),
-      webhookToken,
-      createdAt: now,
-      updatedAt: now,
-    };
 
-    await shops.insertOne(doc);
+    // Try a few times in case the counter was lagging and we hit a duplicate
+    const MAX_TRIES = 5;
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      const numericId = await getNextShopId(); // should be >= 10001 after admin sync
+      const doc = {
+        shopId: numericId,
+        name: name.trim(),
+        webhookToken,
+        createdAt: now,
+        updatedAt: now,
+      };
 
-    // 4) Return Tekmetric-style id + token
-    return NextResponse.json({
-      shop: { shopId: numericId, name: doc.name, webhookToken },
-    });
+      try {
+        await shops.insertOne(doc);
+        return NextResponse.json({
+          shop: { shopId: numericId, name: doc.name, webhookToken },
+        });
+      } catch (err: any) {
+        // 11000 = duplicate key
+        if (err?.code === 11000 && attempt < MAX_TRIES) {
+          continue; // grab next id and retry
+        }
+        // bubble anything else
+        throw err;
+      }
+    }
+
+    return NextResponse.json(
+      { error: "Could not allocate a unique shopId after multiple attempts" },
+      { status: 500 }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "Unknown error" },
@@ -51,8 +62,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
-/**
- * (Optional) Keep your existing GET handler if you have one.
- * You can also add a simple GET here that lists shops, but it’s not required for Step 2.
- */
