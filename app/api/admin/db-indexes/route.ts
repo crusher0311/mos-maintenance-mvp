@@ -4,7 +4,7 @@ import { getDb } from "@/lib/mongo";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// shallow but reliable enough for index key objects
+// shallow equality for index key specs (stable enough for simple 1/-1 keys)
 function keysEqual(a: Record<string, any>, b: Record<string, any>) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -19,13 +19,15 @@ export async function POST(req: NextRequest) {
 
   try {
     const db = await getDb();
-    const shops = db.collection("shops");
-    const counters = db.collection("counters");
-    const setupTokens = db.collection("setup_tokens");
-    const users = db.collection("users");
-    const sessions = db.collection("sessions");
+    const shops        = db.collection("shops");
+    const counters     = db.collection("counters");
+    const setupTokens  = db.collection("setup_tokens");
+    const users        = db.collection("users");
+    const sessions     = db.collection("sessions");
+    const pwresets     = db.collection("password_resets");
 
-    // helper: drop any index on the same key pattern but with a different name
+    // helper: when `force=1`, drop any existing index on the same key pattern
+    // but with a different name (prevents "index already exists with a different name")
     async function dropConflictingIndex(
       coll: any,
       desiredKeys: Record<string, 1 | -1>,
@@ -37,16 +39,15 @@ export async function POST(req: NextRequest) {
         for (const idx of list) {
           if (idx.name === desiredName) continue;
           if (idx.key && keysEqual(idx.key, desiredKeys)) {
-            // drop the old differently-named index
             await coll.dropIndex(idx.name).catch(() => {});
           }
         }
       } catch {
-        // ignore
+        // ignore if listIndexes fails (collection may be new)
       }
     }
 
-    // helper: create index but ignore "already exists" or options conflict
+    // helper: create index and tolerate "already exists" or "options conflict"
     async function ensureIndex(
       coll: any,
       keys: Record<string, 1 | -1>,
@@ -56,9 +57,7 @@ export async function POST(req: NextRequest) {
         await coll.createIndex(keys, options);
       } catch (e: any) {
         const msg = String(e?.message || "");
-        if (msg.includes("already exists") || msg.includes("IndexOptionsConflict")) {
-          return;
-        }
+        if (msg.includes("already exists") || msg.includes("IndexOptionsConflict")) return;
         throw e;
       }
     }
@@ -85,13 +84,14 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .next();
     const maxExisting = Number.isFinite(maxDoc?.shopId) ? (maxDoc!.shopId as number) : 0;
+
     await counters.updateOne(
       { _id: "shopId" },
       { $set: { seq: maxExisting }, $setOnInsert: { _id: "shopId" } },
       { upsert: true }
     );
 
-    // ---- setup_tokens
+    // ---- setup_tokens (invite/setup)
     await dropConflictingIndex(setupTokens, { token: 1 }, "setup_token_unique");
     await ensureIndex(setupTokens, { token: 1 }, { unique: true, name: "setup_token_unique" });
 
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
       { expireAfterSeconds: 0, name: "setup_token_ttl" }
     );
 
-    // ---- users: one email per shop (this is where your conflict is)
+    // ---- users (one email per shop)
     await dropConflictingIndex(users, { shopId: 1, emailLower: 1 }, "user_unique_per_shop");
     await ensureIndex(
       users,
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       { unique: true, name: "user_unique_per_shop" }
     );
 
-    // ---- sessions: unique token + TTL
+    // ---- sessions (unique token + TTL)
     await dropConflictingIndex(sessions, { token: 1 }, "session_token_unique");
     await ensureIndex(sessions, { token: 1 }, { unique: true, name: "session_token_unique" });
 
@@ -119,6 +119,17 @@ export async function POST(req: NextRequest) {
       sessions,
       { expiresAt: 1 },
       { expireAfterSeconds: 0, name: "session_ttl" }
+    );
+
+    // ---- password_resets (this is the new part you asked for)
+    await dropConflictingIndex(pwresets, { token: 1 }, "pwreset_token_unique");
+    await ensureIndex(pwresets, { token: 1 }, { unique: true, name: "pwreset_token_unique" });
+
+    await dropConflictingIndex(pwresets, { expiresAt: 1 }, "pwreset_ttl");
+    await ensureIndex(
+      pwresets,
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: "pwreset_ttl" }
     );
 
     const counterNow = await counters.findOne({ _id: "shopId" });
@@ -133,6 +144,8 @@ export async function POST(req: NextRequest) {
         "users {shopId,emailLower} (unique)",
         "sessions.token (unique)",
         "sessions.expiresAt (TTL)",
+        "password_resets.token (unique)",
+        "password_resets.expiresAt (TTL)",
       ],
       counter: counterNow,
       maxExisting,
