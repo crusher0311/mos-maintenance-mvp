@@ -1,143 +1,96 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "node:crypto";
 import { getDb } from "@/lib/mongo";
+import crypto from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /api/auth/complete-setup
- * Body: { shopId: number, token: string, email: string, password: string }
- *
- * Validates setup token, creates first user for the shop, creates a session, sets HttpOnly cookie.
- */
 export async function POST(req: NextRequest) {
   try {
-    const { shopId, token, email, password } = (await safeJson(req)) as any;
+    const body = await req.json().catch(() => null);
+    const shopId = Number(body?.shopId);
+    const token = String(body?.token || "");
+    const email = String(body?.email || "").trim().toLowerCase();
+    const password = String(body?.password || "");
 
-    if (!Number.isFinite(shopId)) {
-      return NextResponse.json({ error: "Invalid shopId" }, { status: 400 });
+    if (!shopId || !token || !email || !password) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
-    if (!token || typeof token !== "string") {
-      return NextResponse.json({ error: "Missing or invalid token" }, { status: 400 });
-    }
-    if (!email || typeof email !== "string") {
-      return NextResponse.json({ error: "Missing email" }, { status: 400 });
-    }
-    if (!password || typeof password !== "string" || password.length < 8) {
+    if (password.length < 8) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
 
     const db = await getDb();
-    const shops = db.collection("shops");
-    const setupTokens = db.collection("setup_tokens");
+    const setup = db.collection("setup_tokens");
     const users = db.collection("users");
     const sessions = db.collection("sessions");
 
-    // Validate shop
-    const shop = await shops.findOne({ shopId }, { projection: { _id: 1, name: 1 } });
-    if (!shop) {
-      return NextResponse.json({ error: "Shop not found" }, { status: 404 });
-    }
-
-    // Validate setup token
+    // validate token
     const now = new Date();
-    const tok = await setupTokens.findOne({ token, shopId });
-    if (!tok) {
-      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
-    }
-    if (tok.usedAt) {
-      return NextResponse.json({ error: "Token already used" }, { status: 400 });
-    }
-    if (tok.expiresAt && now > new Date(tok.expiresAt)) {
-      return NextResponse.json({ error: "Token expired" }, { status: 400 });
+    const invite = await setup.findOne({ token, shopId, expiresAt: { $gt: now } });
+    if (!invite) {
+      return NextResponse.json({ error: "Invalid or expired setup token" }, { status: 401 });
     }
 
-    // Ensure user uniqueness (email per shop)
-    const emailLower = String(email).trim().toLowerCase();
-    await ensureUserIndexes(users, sessions);
-
-    const existing = await users.findOne({ shopId, emailLower }, { projection: { _id: 1 } });
-    if (existing) {
-      return NextResponse.json({ error: "A user with this email already exists for the shop" }, { status: 409 });
+    // enforce email if invite specified one
+    const inviteEmail = (invite.emailLower || "").toLowerCase();
+    if (inviteEmail && inviteEmail !== email) {
+      return NextResponse.json({ error: "Email does not match invite" }, { status: 403 });
     }
 
-    // Hash password with Node's scrypt
-    const { hash, salt } = await scryptHash(password);
-    const passwordHash = `scrypt:1:${salt}:${hash}`;
+    // role: from invite OR default to "owner" (first user case)
+    const role = invite.role || "owner";
 
-    // Determine role: first user becomes "owner"
-    const countForShop = await users.countDocuments({ shopId });
-    const role = countForShop === 0 ? "owner" : "admin";
+    // ensure uniqueness per shop
+    const exists = await users.findOne({ shopId, emailLower: email });
+    if (exists) {
+      return NextResponse.json({ error: "User already exists for this shop" }, { status: 409 });
+    }
 
-    const createdAt = now;
-    const userIns = await users.insertOne({
+    // hash password (scrypt)
+    const salt = crypto.randomBytes(16).toString("hex");
+    const derived = await new Promise<Buffer>((resolve, reject) => {
+      crypto.scrypt(password, salt, 64, (err, buf) => (err ? reject(err) : resolve(buf)));
+    });
+    const passwordHash = `scrypt:1:${salt}:${derived.toString("hex")}`;
+
+    // create user
+    const now2 = new Date();
+    const insert = await users.insertOne({
       shopId,
       email,
-      emailLower,
+      emailLower: email,
       role,
       passwordHash,
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: now2,
+      updatedAt: now2,
     });
 
-    // Mark token used
-    await setupTokens.updateOne({ token }, { $set: { usedAt: now } });
+    // single-use token: remove after success
+    await setup.deleteOne({ _id: invite._id });
 
-    // Create a server-side session and set cookie
-    const sessionToken = crypto.randomBytes(24).toString("hex");
+    // create session
+    const sid = crypto.randomBytes(24).toString("hex");
     const ttlDays = 30;
-    const expiresAt = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(now2.getTime() + ttlDays * 24 * 60 * 60 * 1000);
     await sessions.insertOne({
-      token: sessionToken,
-      userId: userIns.insertedId,
+      token: sid,
+      userId: insert.insertedId,
       shopId,
-      createdAt: now,
+      createdAt: now2,
       expiresAt,
     });
 
-    const res = NextResponse.json({
-      ok: true,
-      shopId,
-      userId: String(userIns.insertedId),
-      role,
-      // Later you can redirect to a dashboard route:
-      // redirect: `/shops/${shopId}/dashboard`
-    });
-
-    // HttpOnly cookie
-    res.cookies.set("sid", sessionToken, {
+    const res = NextResponse.json({ ok: true, redirect: "/dashboard", shopId, role });
+    res.cookies.set("sid", sid, {
       httpOnly: true,
       secure: true,
       sameSite: "lax",
       path: "/",
       expires: expiresAt,
     });
-
     return res;
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "Unknown error" }, { status: 500 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
   }
-}
-
-async function safeJson(req: NextRequest) {
-  try { return await req.json(); } catch { return null; }
-}
-
-function scryptHash(password: string): Promise<{ hash: string; salt: string }> {
-  return new Promise((resolve, reject) => {
-    const salt = crypto.randomBytes(16).toString("hex");
-    crypto.scrypt(password, salt, 64, (err, result) => {
-      if (err) return reject(err);
-      resolve({ hash: Buffer.from(result).toString("hex"), salt });
-    });
-  });
-}
-
-async function ensureUserIndexes(users: any, sessions: any) {
-  // unique email per shop (case-insensitive via emailLower)
-  await users.createIndex({ shopId: 1, emailLower: 1 }, { unique: true, name: "users_shop_email_unique" });
-  // sessions: unique token and TTL on expiresAt
-  await sessions.createIndex({ token: 1 }, { unique: true, name: "sessions_token_unique" });
-  await sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "sessions_expires_ttl" });
 }

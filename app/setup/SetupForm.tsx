@@ -1,12 +1,13 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function SetupForm() {
   const sp = useSearchParams();
   const shopId = sp.get("shopId") || "";
   const token = sp.get("token") || "";
+  const emailFromLink = useMemo(() => (sp.get("email") || "").toLowerCase(), [sp]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,10 +15,9 @@ export default function SetupForm() {
   const [msg, setMsg] = useState<string>("");
 
   useEffect(() => {
-    if (!shopId || !token) {
-      setMsg("Missing shopId or token in URL.");
-    }
-  }, [shopId, token]);
+    if (!shopId || !token) setMsg("Missing shopId or token in URL.");
+    if (emailFromLink) setEmail(emailFromLink);
+  }, [shopId, token, emailFromLink]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,12 +31,9 @@ export default function SetupForm() {
         body: JSON.stringify({ shopId: Number(shopId), token, email, password }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || "Setup failed");
-      }
+      if (!res.ok) throw new Error(data?.error || "Setup failed");
       setMsg("✅ Account created and signed in.");
-      // Optional: redirect after success
-      // window.location.href = data.redirect || `/shops/${shopId}/dashboard`;
+      // window.location.href = data.redirect || "/dashboard";
     } catch (err: any) {
       setMsg("❌ " + (err?.message || String(err)));
     } finally {
@@ -57,6 +54,7 @@ export default function SetupForm() {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         required
+        disabled={!!emailFromLink}
       />
       <input
         type="password"
@@ -77,10 +75,7 @@ export default function SetupForm() {
       </button>
 
       {msg && <div className="text-sm whitespace-pre-wrap">{msg}</div>}
-
-      <p className="text-xs text-gray-500">
-        This creates the first user for the shop and signs them in.
-      </p>
+      <p className="text-xs text-gray-500">This creates the user and signs them in.</p>
     </form>
   );
 }

@@ -1,6 +1,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "@/lib/mongo";
+import InviteForm from "./InviteForm";
+
+// …inside the returned JSX, after the user info block:
+<InviteForm />
 
 export const dynamic = "force-dynamic";
 
