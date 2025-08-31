@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  * Body: { email: string, shopId?: number }
  *
  * If a single account matches, creates a short-lived reset token and returns a reset URL.
- * We return 200 either way to avoid email enumeration (but include resetUrl in dev).
+ * Always returns 200 to avoid email enumeration (resetUrl included for dev).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     if (typeof shopId === "number") {
       user = await users.findOne({ emailLower, shopId });
     } else {
-      // If the same email is used in multiple shops, ask for shopId
+      // If the same email is used in multiple shops, require shopId
       const matches = await users.find({ emailLower }).limit(2).toArray();
       if (matches.length > 1) {
         return NextResponse.json(
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       user = matches[0] || null;
     }
 
-    // Always respond 200; only include resetUrl when we actually created a token
+    // Always respond 200; include resetUrl only when token created
     if (!user) {
       return NextResponse.json({
         ok: true,
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      resetUrl,        // For now we return it so you can copy it; later you'll email it.
+      resetUrl,        // (dev) you can copy this; later send via email provider
       expiresAt,
     });
   } catch (e: any) {

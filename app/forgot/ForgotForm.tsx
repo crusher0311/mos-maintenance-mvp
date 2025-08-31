@@ -25,7 +25,7 @@ export default function ForgotForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed");
       setMsg("If the account exists, a reset link has been generated.");
-      if (data.resetUrl) setResetUrl(data.resetUrl); // dev: show link so you can copy
+      if (data.resetUrl) setResetUrl(data.resetUrl); // (dev) copy this manually for now
     } catch (e: any) {
       setMsg("❌ " + (e?.message || "Error"));
     } finally {
