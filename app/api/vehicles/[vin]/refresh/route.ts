@@ -10,6 +10,7 @@ async function readInputs(req: NextRequest, vinParam: string) {
   const vin = vinParam?.toUpperCase();
 
   if (req.method === "POST") {
+    // Try FormData first
     try {
       const fd = await req.formData();
       const shopId = Number(fd.get("shopId"));
@@ -18,6 +19,7 @@ async function readInputs(req: NextRequest, vinParam: string) {
         return { vin, shopId, customerExternalId };
       }
     } catch {}
+    // Fallback to JSON body
     try {
       const j = await req.json();
       const shopId = Number(j?.shopId);
@@ -112,16 +114,17 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       { $set: { status: "done", updatedAt: new Date() } }
     );
 
+    // -------- Fixed redirect: build absolute URL from req.url --------
     if (req.method === "POST") {
-      // ✅ Use absolute URL for redirect
-      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://mos-maintenance-mvp.vercel.app";
-      const redirectUrl = `${baseUrl}/dashboard/customers/${encodeURIComponent(
-        customerExternalId
-      )}/vehicles/${encodeURIComponent(vin)}`;
+      const { origin } = new URL(req.url);
+      const dest =
+        `${origin}/dashboard/customers/` +
+        `${encodeURIComponent(customerExternalId)}/vehicles/${encodeURIComponent(vin)}?refreshed=1`;
 
-      return NextResponse.redirect(redirectUrl, { status: 303 });
+      return NextResponse.redirect(dest, { status: 303 });
     }
 
+    // For GET testing: return JSON
     return NextResponse.json({
       ok: true,
       vin,
@@ -131,6 +134,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
     });
   } catch (err: any) {
     console.error("vehicle refresh error", err);
-    return NextResponse.json({ error: "Server error", details: String(err?.message || err) }, { status: 500 });
+    const details = typeof err?.message === "string" ? err.message : undefined;
+    return NextResponse.json({ error: "Server error", details }, { status: 500 });
   }
 }
