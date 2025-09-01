@@ -1,15 +1,21 @@
 // app/login/page.tsx
 import { Suspense } from "react";
 import LoginForm from "./LoginForm";
-import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
+// Force per-request rendering (no static caching)
 export const dynamic = "force-dynamic";
+// Also disable static optimization explicitly
+export const revalidate = 0;
 
 export default async function LoginPage() {
-  // Use your custom helper instead of NextAuth's getServerSession
-  const session = await getSession();
-  if (session) redirect("/dashboard/customers");
+  // Very light server check: if already logged in, bounce to dashboard
+  // This should never hang because getSession reads a cookie + 1 small DB doc.
+  const sess = await getSession();
+  if (sess) {
+    redirect("/dashboard/customers");
+  }
 
   return (
     <main className="mx-auto max-w-md p-6 space-y-6">
