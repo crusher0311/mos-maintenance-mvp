@@ -1,43 +1,56 @@
-import { NextRequest } from "next/server";
-import { getDb } from "@/lib/mongo";
-import { ObjectId } from "mongodb";
+// lib/auth.ts
+import 'server-only';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { getDb } from '@/lib/mongo';
 
-export type SessionUser = {
-  _id: ObjectId;
+export const SESSION_COOKIE = 'session_token';
+
+export type SessionInfo = {
+  token: string;
   shopId: number;
   email: string;
-  emailLower: string;
-  role: "owner" | "manager" | "staff" | string;
+  role: string;
 };
 
-export async function getSessionFromRequest(req: NextRequest) {
-  const sid = req.cookies.get("sid")?.value;
-  if (!sid) return null;
+export async function getSession(): Promise<SessionInfo | null> {
+  const token = cookies().get(SESSION_COOKIE)?.value;
+  if (!token) return null;
 
   const db = await getDb();
-  const sessions = db.collection("sessions");
-  const users = db.collection("users");
-
-  const now = new Date();
-  const sess = await sessions.findOne({ token: sid, expiresAt: { $gt: now } });
+  const sess = await db.collection('sessions').findOne({
+    token,
+    expiresAt: { $gt: new Date() },
+  });
   if (!sess) return null;
 
-  const user = await users.findOne({ _id: sess.userId as ObjectId });
+  const user = await db.collection('users').findOne(
+    { _id: sess.userId },
+    { projection: { email: 1, role: 1 } }
+  );
   if (!user) return null;
 
-  const u: SessionUser = {
-    _id: user._id as ObjectId,
+  return {
+    token,
     shopId: sess.shopId as number,
     email: user.email as string,
-    emailLower: user.emailLower as string,
-    role: (user.role as string) || "staff",
+    role: (user.role as string) || 'owner',
   };
-
-  return { sid, user: u, shopId: u.shopId };
 }
 
-export async function requireOwner(req: NextRequest) {
-  const s = await getSessionFromRequest(req);
-  if (!s || s.user.role !== "owner") return null;
+export async function requireSession(): Promise<SessionInfo> {
+  const s = await getSession();
+  if (!s) redirect('/login');
   return s;
+}
+
+// Optional: use this in API routes when setting the cookie
+export function sessionCookieOptions(maxAgeSeconds = 60 * 60 * 24 * 30) {
+  return {
+    httpOnly: true as const,
+    secure: true as const,
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: maxAgeSeconds,
+  };
 }
