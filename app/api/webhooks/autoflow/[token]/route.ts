@@ -1,6 +1,8 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+﻿// app/api/webhooks/autoflow/[token]/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
+import { upsertCustomerFromAutoflow } from "@/lib/models/customers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,7 +10,6 @@ export const dynamic = "force-dynamic";
 // ---- Helpers -------------------------------------------------------------
 
 function timingSafeEqual(a: Buffer, b: Buffer) {
-  // same-length compare to avoid timing attacks
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
 }
@@ -24,10 +25,9 @@ function verifyHmacSHA256(secret: string, rawBody: string, signatureHex: string)
 
 async function findShopByToken(token: string) {
   const db = await getDb();
-  const shop = await db
+  return db
     .collection("shops")
     .findOne({ webhookToken: token }, { projection: { shopId: 1, name: 1 } });
-  return shop;
 }
 
 // ---- GET: simple token validity check -----------------------------------
@@ -36,20 +36,17 @@ export async function GET(req: NextRequest, ctx: { params: { token: string } }) 
   const token = ctx.params?.token || "";
   if (!token) return NextResponse.json({ error: "missing token" }, { status: 400 });
 
-  // optional ping param: /?ping=1
   const isPing = req.nextUrl.searchParams.has("ping");
-
   const shop = await findShopByToken(token);
   if (!shop) return NextResponse.json({ error: "invalid token" }, { status: 401 });
 
   if (isPing) {
     return NextResponse.json({ ok: true, shopId: shop.shopId, tokenValid: true });
   }
-  // If you want GET to do nothing else:
   return NextResponse.json({ ok: true, shopId: shop.shopId });
 }
 
-// ---- POST: accept webhook payload ---------------------------------------
+// ---- POST: accept webhook payload --------------------------------------
 
 export async function POST(req: NextRequest, ctx: { params: { token: string } }) {
   const token = ctx.params?.token || "";
@@ -64,13 +61,12 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
   try {
     payload = raw ? JSON.parse(raw) : null;
   } catch {
-    // keep payload as null; raw will still be saved
+    // keep payload as null; raw is still saved
   }
 
-  // OPTIONAL signature verification (enable by setting AUTOFLOW_SIGNING_SECRET)
+  // OPTIONAL signature verification (enable later if you want; no UI needed)
   const secret = process.env.AUTOFLOW_SIGNING_SECRET || "";
   if (secret) {
-    // Common header names; adjust if AutoFlow uses a specific one
     const sig =
       req.headers.get("x-autoflow-signature") ||
       req.headers.get("x-signature") ||
@@ -80,16 +76,37 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
     }
   }
 
-  // Persist the event for debugging/auditing
   const db = await getDb();
+
+  // Persist raw event for audit / console
   await db.collection("events").insertOne({
     provider: "autoflow",
     shopId: shop.shopId,
     token,
     payload,
-    raw, // optional: keep raw for debugging
+    raw,
     receivedAt: new Date(),
   });
+
+  // Best-effort normalization: upsert customer for common cases.
+  try {
+    const eventName = payload?.event ?? payload?.type ?? payload?.name ?? "";
+    const looksCustomerish =
+      !!payload?.customer ||
+      !!payload?.data?.customer ||
+      !!payload?.customerId ||
+      !!payload?.data?.customerId ||
+      !!payload?.data?.customer_id;
+
+    if (
+      looksCustomerish ||
+      /customer\.(created|updated|upsert)/i.test(String(eventName))
+    ) {
+      await upsertCustomerFromAutoflow(shop.shopId, payload);
+    }
+  } catch {
+    // Swallow normalization errors; raw event is still stored
+  }
 
   return NextResponse.json({ ok: true, shopId: shop.shopId });
 }
