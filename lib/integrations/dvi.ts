@@ -9,7 +9,6 @@ function maybeDecodeBase64(s?: string | null): string {
   try {
     const buf = Buffer.from(s, "base64");
     const txt = buf.toString("utf8");
-    // If re-encoding yields original, assume success
     if (Buffer.from(txt, "utf8").toString("base64") === s) return txt;
     return s;
   } catch {
@@ -41,8 +40,140 @@ async function getShopAutoflowCreds(shopId: number): Promise<{
 }
 
 /**
+ * Try to normalize a single inspection/check/finding item from various possible shapes.
+ * We keep it flexible because different AutoFlow tenants/versions may differ.
+ */
+function normalizeLineItem(x: any): {
+  section?: string | null;
+  title?: string | null;
+  status?: string | null;
+  severity?: string | number | null;
+  recommendation?: string | null;
+  notes?: string | null;
+  estParts?: number | null;
+  estLaborHours?: number | null;
+  estTotal?: number | null;
+  photos?: any[] | null;
+  raw?: any;
+} {
+  const section =
+    x?.section ??
+    x?.group ??
+    x?.category ??
+    x?.heading ??
+    null;
+
+  const title =
+    x?.title ??
+    x?.name ??
+    x?.line_item ??
+    x?.inspection_item ??
+    x?.item ??
+    null;
+
+  const status =
+    x?.status ??
+    x?.result ??
+    x?.condition ??
+    null;
+
+  const severity =
+    x?.severity ??
+    x?.priority ??
+    x?.level ??
+    null;
+
+  const recommendation =
+    x?.recommendation ??
+    x?.recommendations ??
+    x?.action ??
+    x?.advice ??
+    null;
+
+  const notes =
+    x?.notes ??
+    x?.note ??
+    x?.comment ??
+    x?.comments ??
+    null;
+
+  const estParts =
+    x?.estimate?.parts != null
+      ? Number(x.estimate.parts)
+      : x?.parts_total != null
+      ? Number(x.parts_total)
+      : null;
+
+  const estLaborHours =
+    x?.estimate?.labor_hours != null
+      ? Number(x.estimate.labor_hours)
+      : x?.labor_hours != null
+      ? Number(x.labor_hours)
+      : null;
+
+  const estTotal =
+    x?.estimate?.total != null
+      ? Number(x.estimate.total)
+      : x?.total != null
+      ? Number(x.total)
+      : null;
+
+  const photos =
+    Array.isArray(x?.photos) ? x.photos :
+    Array.isArray(x?.images) ? x.images :
+    null;
+
+  return {
+    section: section ?? null,
+    title: title ?? null,
+    status: status ?? null,
+    severity: severity ?? null,
+    recommendation: recommendation ?? null,
+    notes: notes ?? null,
+    estParts: Number.isFinite(estParts as number) ? (estParts as number) : null,
+    estLaborHours: Number.isFinite(estLaborHours as number) ? (estLaborHours as number) : null,
+    estTotal: Number.isFinite(estTotal as number) ? (estTotal as number) : null,
+    photos: photos ?? null,
+    raw: x,
+  };
+}
+
+/**
+ * From a single DVI "content" entry, try to extract an array of line items from common paths.
+ */
+function extractLineItems(c: any): ReturnType<typeof normalizeLineItem>[] {
+  const buckets: any[][] = [];
+
+  // Try a bunch of plausible paths:
+  if (Array.isArray(c?.inspection?.items)) buckets.push(c.inspection.items);
+  if (Array.isArray(c?.inspection?.findings)) buckets.push(c.inspection.findings);
+  if (Array.isArray(c?.items)) buckets.push(c.items);
+  if (Array.isArray(c?.checks)) buckets.push(c.checks);
+  if (Array.isArray(c?.dvi?.items)) buckets.push(c.dvi.items);
+  if (Array.isArray(c?.sheet?.items)) buckets.push(c.sheet.items);
+  if (Array.isArray(c?.sheet?.inspections)) buckets.push(c.sheet.inspections);
+  if (Array.isArray(c?.results)) buckets.push(c.results);
+  if (Array.isArray(c?.lines)) buckets.push(c.lines);
+
+  const out: ReturnType<typeof normalizeLineItem>[] = [];
+  for (const arr of buckets) {
+    for (const x of arr) {
+      out.push(normalizeLineItem(x));
+    }
+  }
+  // De-dup by JSON string to avoid repeats if the same array was found in two places
+  const seen = new Set<string>();
+  return out.filter((li) => {
+    const key = JSON.stringify([li.section, li.title, li.status, li.severity, li.recommendation, li.notes]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
  * Calls AutoFlow DVI API: GET /dvi/{RoNumber}
- * Uses shop's saved credentials (key/password/base) from Mongo.
+ * Stores a DVI document per response entry with detailed `lines` array.
  */
 export async function importDVI(args: { shopId: number; roNumber: string | number }) {
   const { shopId } = args;
@@ -63,7 +194,6 @@ export async function importDVI(args: { shopId: number; roNumber: string | numbe
   });
 
   const json = (await res.json().catch(() => ({}))) as any;
-
   const db = await getDb();
   const now = new Date();
 
@@ -94,10 +224,13 @@ export async function importDVI(args: { shopId: number; roNumber: string | numbe
     return { insertedCount: 0, rows: [] };
   }
 
+  // Build one DVI doc per content entry, now including detailed "lines"
   const rows = content.map((c: any) => {
     const vin = c?.vin ? String(c.vin).toUpperCase() : null;
     const milesNum =
       c?.mileage != null ? Number(String(c.mileage).replace(/[^\d.-]/g, "")) : null;
+
+    const lines = extractLineItems(c);
 
     return {
       shopId,
@@ -118,6 +251,7 @@ export async function importDVI(args: { shopId: number; roNumber: string | numbe
       },
       sheetId: c?.sheet_id ?? null,
       notes: c?.additional_notes ?? null,
+      lines, // <— detailed inspection items
       raw: c,
       fetchedAt: now,
       ok: true,
