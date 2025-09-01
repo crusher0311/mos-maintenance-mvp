@@ -1,54 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
-import { requireOwner } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/events/list?limit=50
- * Owner-only. Lists recent webhook events for the owner's shop.
- */
 export async function GET(req: NextRequest) {
-  const owner = await requireOwner(req);
-  if (!owner) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  const sess = await getSession(req);
+  if (!sess) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const url = new URL(req.url);
-  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 50)));
+  const { user } = sess;
+  // If you want owner-only, uncomment:
+  // if (user.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const limit = clampInt(req.nextUrl.searchParams.get("limit"), 50, 1, 200);
 
   const db = await getDb();
-  const ev = db.collection("events");
+  const events = db.collection("events");
 
-  const rows = await ev
-    .find({ shopId: owner.shopId })
-    .project({
-      provider: 1,
-      receivedAt: 1,
-      payload: 1,
-    })
-    .sort({ receivedAt: -1, _id: -1 })
+  const docs = await events
+    .find({ shopId: user.shopId })
+    .sort({ receivedAt: -1 })
     .limit(limit)
+    .project({
+      _id: 1,
+      provider: 1,
+      event: 1,
+      payload: 1,
+      receivedAt: 1,
+    })
     .toArray();
 
-  const data = rows.map((r: any) => {
-    const eventName =
-      (r?.payload && (r.payload.event || r.payload.type || r.payload.action)) || "(unknown)";
-    let preview = "";
-    try {
-      preview = JSON.stringify(r.payload);
-      if (preview.length > 300) preview = preview.slice(0, 300) + "…";
-    } catch {
-      preview = "";
-    }
-    return {
-      id: String(r._id),
-      ts: r.receivedAt,
-      provider: r.provider || "autoflow",
-      event: eventName,
-      preview,
-      payload: r.payload ?? null,
-    };
-  });
+  return NextResponse.json({ ok: true, items: docs });
+}
 
-  return NextResponse.json({ ok: true, shopId: owner.shopId, events: data });
+function clampInt(val: string | null, def: number, min: number, max: number) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
 }

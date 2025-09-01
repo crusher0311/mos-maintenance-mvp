@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionFromRequest } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const s = await getSessionFromRequest(req);
-  if (!s) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  const sess = await getSession(req);
+
+  if (!sess) {
+    // Not signed in; return 200 with a clear flag (keeps client logic simple)
+    return NextResponse.json({ ok: true, authenticated: false });
+  }
+
+  const { user } = sess;
   return NextResponse.json({
     ok: true,
-    email: s.user.email,
-    role: s.user.role,
-    shopId: s.shopId,
+    authenticated: true,
+    user: {
+      _id: user._id,
+      email: user.email,
+      role: user.role,
+      shopId: user.shopId,
+    },
   });
 }
