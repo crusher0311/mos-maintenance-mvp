@@ -4,7 +4,7 @@ import { getDb } from "@/lib/mongo";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// shallow equality for index key specs (stable enough for simple 1/-1 keys)
+// shallow equality for index key specs
 function keysEqual(a: Record<string, any>, b: Record<string, any>) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -25,9 +25,8 @@ export async function POST(req: NextRequest) {
     const users        = db.collection("users");
     const sessions     = db.collection("sessions");
     const pwresets     = db.collection("password_resets");
+    const ratelimits   = db.collection("ratelimits");
 
-    // helper: when `force=1`, drop any existing index on the same key pattern
-    // but with a different name (prevents "index already exists with a different name")
     async function dropConflictingIndex(
       coll: any,
       desiredKeys: Record<string, 1 | -1>,
@@ -42,12 +41,9 @@ export async function POST(req: NextRequest) {
             await coll.dropIndex(idx.name).catch(() => {});
           }
         }
-      } catch {
-        // ignore if listIndexes fails (collection may be new)
-      }
+      } catch {}
     }
 
-    // helper: create index and tolerate "already exists" or "options conflict"
     async function ensureIndex(
       coll: any,
       keys: Record<string, 1 | -1>,
@@ -121,7 +117,7 @@ export async function POST(req: NextRequest) {
       { expireAfterSeconds: 0, name: "session_ttl" }
     );
 
-    // ---- password_resets (this is the new part you asked for)
+    // ---- password_resets (unique token + TTL)
     await dropConflictingIndex(pwresets, { token: 1 }, "pwreset_token_unique");
     await ensureIndex(pwresets, { token: 1 }, { unique: true, name: "pwreset_token_unique" });
 
@@ -130,6 +126,21 @@ export async function POST(req: NextRequest) {
       pwresets,
       { expiresAt: 1 },
       { expireAfterSeconds: 0, name: "pwreset_ttl" }
+    );
+
+    // ---- ratelimits (unique bucket + TTL)
+    await dropConflictingIndex(ratelimits, { bucketKey: 1 }, "ratelimit_bucket_unique");
+    await ensureIndex(
+      ratelimits,
+      { bucketKey: 1 },
+      { unique: true, name: "ratelimit_bucket_unique" }
+    );
+
+    await dropConflictingIndex(ratelimits, { expiresAt: 1 }, "ratelimit_ttl");
+    await ensureIndex(
+      ratelimits,
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: "ratelimit_ttl" }
     );
 
     const counterNow = await counters.findOne({ _id: "shopId" });
@@ -146,6 +157,8 @@ export async function POST(req: NextRequest) {
         "sessions.expiresAt (TTL)",
         "password_resets.token (unique)",
         "password_resets.expiresAt (TTL)",
+        "ratelimits.bucketKey (unique)",
+        "ratelimits.expiresAt (TTL)",
       ],
       counter: counterNow,
       maxExisting,

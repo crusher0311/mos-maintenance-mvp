@@ -2,17 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
 import { sendEmail, makeResetEmail } from "@/lib/email";
+import { clientIp, rateLimit } from "@/lib/rate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /api/auth/forgot
- * Body: { email: string, shopId?: number }
- *
- * If a single account matches, creates a short-lived reset token and emails a reset URL.
- * Always returns 200 to avoid email enumeration (still includes resetUrl in JSON for dev).
- */
 export async function POST(req: NextRequest) {
   try {
     const db = await getDb();
@@ -23,16 +17,28 @@ export async function POST(req: NextRequest) {
     const emailLower = String(body?.email || "").trim().toLowerCase();
     const shopId = Number.isFinite(body?.shopId) ? Number(body.shopId) : undefined;
 
+    // ---- Rate limit (5 requests / hour per IP + email + shop) ----
+    const ip = clientIp(req);
+    const rl = await rateLimit({
+      id: `forgot:${ip}:${emailLower}:${shopId ?? "_"}`,
+      limit: 5,
+      windowSeconds: 60 * 60,
+    });
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { ok: false, error: "Too many requests. Try again later." },
+        { status: 429 }
+      );
+    }
+
     if (!emailLower) {
       return NextResponse.json({ ok: true, note: "If the account exists, a reset link will be generated." });
     }
 
     let user: any = null;
-
     if (typeof shopId === "number") {
       user = await users.findOne({ emailLower, shopId });
     } else {
-      // If the same email is used in multiple shops, require shopId
       const matches = await users.find({ emailLower }).limit(2).toArray();
       if (matches.length > 1) {
         return NextResponse.json(
@@ -43,7 +49,6 @@ export async function POST(req: NextRequest) {
       user = matches[0] || null;
     }
 
-    // Always respond 200; include resetUrl only when token created
     if (!user) {
       return NextResponse.json({
         ok: true,
@@ -53,7 +58,7 @@ export async function POST(req: NextRequest) {
 
     const token = crypto.randomBytes(24).toString("hex");
     const now = new Date();
-    const minutes = 30; // token lifetime
+    const minutes = 30;
     const expiresAt = new Date(now.getTime() + minutes * 60 * 1000);
 
     await pwresets.insertOne({
@@ -68,20 +73,14 @@ export async function POST(req: NextRequest) {
     const base = process.env.PUBLIC_BASE_URL || req.nextUrl.origin;
     const resetUrl = `${base}/reset?token=${token}`;
 
-    // Try to send email (dev fallback logs if no env)
     try {
       const { subject, html, text } = makeResetEmail(resetUrl);
       await sendEmail({ to: user.email as string, subject, html, text });
     } catch (e) {
       console.warn("sendEmail failed:", e);
-      // We still return ok; resetUrl included below for manual copy.
     }
 
-    return NextResponse.json({
-      ok: true,
-      resetUrl,        // (dev) copy manually if needed
-      expiresAt,
-    });
+    return NextResponse.json({ ok: true, resetUrl, expiresAt });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Unknown error" }, { status: 500 });
   }

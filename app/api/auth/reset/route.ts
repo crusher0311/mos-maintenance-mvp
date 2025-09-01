@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
+import { clientIp, rateLimit } from "@/lib/rate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /api/auth/reset
- * Body: { token: string, password: string }
- *
- * Verifies token, updates user's password, clears existing sessions, starts a fresh session.
- */
+function parseScrypt(hash: string) {
+  const [algo, v, salt, hex] = String(hash || "").split(":");
+  if (algo !== "scrypt") return null;
+  return { version: Number(v || 1), salt, hex };
+}
+
+async function hashPasswordScrypt(password: string) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = await new Promise<Buffer>((resolve, reject) =>
+    crypto.scrypt(password, salt, 64, (err, buf) => (err ? reject(err) : resolve(buf)))
+  );
+  return `scrypt:1:${salt}:${derived.toString("hex")}`;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const db = await getDb();
@@ -21,6 +30,20 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const token = String(body?.token || "");
     const password = String(body?.password || "");
+
+    // ---- Rate limit (5 resets / hour per IP + token) ----
+    const ip = clientIp(req);
+    const rl = await rateLimit({
+      id: `reset:${ip}:${token.slice(0, 16)}`,
+      limit: 5,
+      windowSeconds: 60 * 60,
+    });
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Try again later." },
+        { status: 429 }
+      );
+    }
 
     if (!token || !password) {
       return NextResponse.json({ error: "Missing token or password" }, { status: 400 });
@@ -35,26 +58,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
     }
 
-    // Hash new password (scrypt:1:<salt>:<hash>)
-    const salt = crypto.randomBytes(16).toString("hex");
-    const derived = await new Promise<Buffer>((resolve, reject) => {
-      crypto.scrypt(password, salt, 64, (err, buf) => (err ? reject(err) : resolve(buf)));
-    });
-    const passwordHash = `scrypt:1:${salt}:${derived.toString("hex")}`;
+    const passwordHash = await hashPasswordScrypt(password);
 
-    // Update user
     await users.updateOne(
       { _id: pr.userId },
       { $set: { passwordHash, updatedAt: now } }
     );
 
-    // Invalidate old sessions
     await sessions.deleteMany({ userId: pr.userId });
-
-    // Remove token (single-use)
     await pwresets.deleteOne({ _id: pr._id });
 
-    // Create fresh session
     const sid = crypto.randomBytes(24).toString("hex");
     const ttlDays = 30;
     const expiresAt = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
