@@ -61,7 +61,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
     const db = await getDb();
     const now = new Date();
 
-    // Most recent ticket for RO#
+    // Find most recent ticket for this VIN to get RO#
     const ticket = await db.collection("tickets").findOne(
       { shopId, vin },
       { sort: { updatedAt: -1 }, projection: { roNumber: 1 } }
@@ -78,7 +78,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       updatedAt: now,
     });
 
-    // Step 1: DVI import (if we have RO)
+    // Step 1: DVI import (only if we have an RO#)
     let dviSummary: any = { skipped: true };
     if (ro) {
       try {
@@ -107,6 +107,10 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       });
     }
 
+    // (Future) Step 2: DataOne VIN decode
+    // (Future) Step 3: Carfax
+    // (Future) Step 4: AI recommendations
+
     await db.collection("jobs").updateMany(
       { type: "vehicle-refresh", shopId, vin, customerExternalId, status: "running" },
       { $set: { status: "done", updatedAt: new Date() } }
@@ -125,8 +129,9 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       roNumber: ro,
       dvi: dviSummary,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("vehicle refresh error", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    // Surface the message so you can see what's wrong in the browser/Network tab
+    return NextResponse.json({ error: "Server error", details: String(err?.message || err) }, { status: 500 });
   }
 }

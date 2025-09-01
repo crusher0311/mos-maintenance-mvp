@@ -1,18 +1,17 @@
 // lib/integrations/dvi.ts
 import { getDb } from "@/lib/mongo";
 
-/** Best-effort base64 decoder: if input looks like base64, decode; else return as-is */
+/** Heuristic base64 decoder: if it looks like base64, decode; else return as-is */
 function maybeDecodeBase64(s?: string | null): string {
   if (!s) return "";
   const looksB64 = /^[A-Za-z0-9+/]+={0,2}$/.test(s) && s.length % 4 === 0;
   if (!looksB64) return s;
   try {
     const buf = Buffer.from(s, "base64");
-    // reject if decoding yields non-printables a lot (very heuristic)
     const txt = buf.toString("utf8");
-    // if it re-encodes back to the same, we probably decoded correctly
+    // If re-encoding yields original, assume success
     if (Buffer.from(txt, "utf8").toString("base64") === s) return txt;
-    return s; // fallback: treat as raw
+    return s;
   } catch {
     return s;
   }
@@ -28,12 +27,13 @@ async function getShopAutoflowCreds(shopId: number): Promise<{
     { shopId },
     { projection: { "credentials.autoflow": 1 } }
   );
+
   const af = (shop as any)?.credentials?.autoflow || {};
-  // values in your DB screenshot look base64-encoded → decode to raw strings
   const apiKeyRaw = maybeDecodeBase64(af.apiKey);
   const apiPasswordRaw = maybeDecodeBase64(af.apiPassword);
   const apiBaseDecoded = maybeDecodeBase64(af.apiBase);
   const apiBase = (apiBaseDecoded || "").replace(/\/+$/, "");
+
   if (!apiKeyRaw || !apiPasswordRaw || !apiBase) {
     throw new Error("Missing AutoFlow credentials for this shop.");
   }
@@ -41,26 +41,17 @@ async function getShopAutoflowCreds(shopId: number): Promise<{
 }
 
 /**
- * Call AutoFlow DVI API: GET /dvi/{RoNumber}
+ * Calls AutoFlow DVI API: GET /dvi/{RoNumber}
  * Uses shop's saved credentials (key/password/base) from Mongo.
  */
-export async function importDVI(args: {
-  shopId: number;
-  roNumber: string | number;
-}) {
+export async function importDVI(args: { shopId: number; roNumber: string | number }) {
   const { shopId } = args;
   const ro = String(args.roNumber);
 
-  const { apiBase, apiKeyRaw, apiPasswordRaw } = await getShopAutoflowCreds(
-    shopId
-  );
-
-  // Build Basic auth: base64(key:password)
-  const basic = Buffer.from(`${apiKeyRaw}:${apiPasswordRaw}`, "utf8").toString(
-    "base64"
-  );
-
+  const { apiBase, apiKeyRaw, apiPasswordRaw } = await getShopAutoflowCreds(shopId);
+  const basic = Buffer.from(`${apiKeyRaw}:${apiPasswordRaw}`, "utf8").toString("base64");
   const url = `${apiBase}/dvi/${encodeURIComponent(ro)}`;
+
   const res = await fetch(url, {
     method: "GET",
     headers: {
@@ -77,8 +68,7 @@ export async function importDVI(args: {
   const now = new Date();
 
   if (!res.ok) {
-    const message =
-      json?.message || json?.error || `AutoFlow DVI HTTP ${res.status}`;
+    const message = json?.message || json?.error || `AutoFlow DVI HTTP ${res.status}`;
     await db.collection("dvi").insertOne({
       shopId,
       roNumber: ro,
@@ -107,9 +97,7 @@ export async function importDVI(args: {
   const rows = content.map((c: any) => {
     const vin = c?.vin ? String(c.vin).toUpperCase() : null;
     const milesNum =
-      c?.mileage != null
-        ? Number(String(c.mileage).replace(/[^\d.-]/g, ""))
-        : null;
+      c?.mileage != null ? Number(String(c.mileage).replace(/[^\d.-]/g, "")) : null;
 
     return {
       shopId,
@@ -175,8 +163,7 @@ export async function importDVI(args: {
         {
           $set: {
             lastVin: first.vin,
-            lastMileage:
-              Number.isFinite(first.mileage) ? first.mileage : undefined,
+            lastMileage: Number.isFinite(first.mileage) ? first.mileage : undefined,
             updatedAt: now,
           },
         }
