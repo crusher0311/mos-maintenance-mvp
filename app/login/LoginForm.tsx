@@ -1,54 +1,48 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { signIn, useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // Optional: include Shop ID if the same email might exist on multiple shops
-  const [shopId, setShopId] = useState<string>(""); // leave blank if not needed
+  const [shopId, setShopId] = useState(""); // optional
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
+
+  const { status } = useSession();
+  const router = useRouter();
+
+  // Client safety net: if already authed, leave /login
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace("/dashboard/customers");
+    }
+  }, [status, router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
 
-    const emailTrim = email.trim().toLowerCase();
-    const pwd = password; // don't trim passwords
-    const shopIdNum = shopId.trim() ? Number(shopId.trim()) : undefined;
-
     setBusy(true);
     setMsg("");
 
     try {
-      const body: Record<string, unknown> = { email: emailTrim, password: pwd };
-      if (Number.isFinite(shopIdNum)) body.shopId = shopIdNum;
-
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const res = await signIn("credentials", {
+        email: email.trim().toLowerCase(),
+        password,
+        // Pass through optional Shop ID if your credentials provider expects it
+        shopId: shopId.trim() || undefined,
+        redirect: false, // handle navigation manually
+        callbackUrl: "/dashboard/customers",
       });
 
-      // Try to parse JSON either way for better error messaging
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        // ignore parse error; we'll fall back to a generic message
-      }
+      if (!res) throw new Error("No response from signIn");
+      if (res.error) throw new Error(res.error);
 
-      if (!res.ok) {
-        const errMsg =
-          (data && (data.error || data.message)) ||
-          `Login failed (HTTP ${res.status})`;
-        throw new Error(errMsg);
-      }
-
-      // Success: redirect to dashboard (or server-provided redirect)
-      window.location.href = (data && data.redirect) || "/dashboard";
+      router.replace(res.url ?? "/dashboard/customers");
     } catch (err: any) {
       setMsg("❌ " + (err?.message || "Login failed"));
     } finally {
@@ -80,7 +74,6 @@ export default function LoginForm() {
         disabled={busy}
       />
 
-      {/* Optional if you expect duplicate emails across shops */}
       <input
         type="text"
         className="w-full border rounded p-2"
