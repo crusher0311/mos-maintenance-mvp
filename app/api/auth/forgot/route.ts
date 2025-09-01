@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
+import { sendEmail, makeResetEmail } from "@/lib/email";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +10,8 @@ export const dynamic = "force-dynamic";
  * POST /api/auth/forgot
  * Body: { email: string, shopId?: number }
  *
- * If a single account matches, creates a short-lived reset token and returns a reset URL.
- * Always returns 200 to avoid email enumeration (resetUrl included for dev).
+ * If a single account matches, creates a short-lived reset token and emails a reset URL.
+ * Always returns 200 to avoid email enumeration (still includes resetUrl in JSON for dev).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -67,9 +68,18 @@ export async function POST(req: NextRequest) {
     const base = process.env.PUBLIC_BASE_URL || req.nextUrl.origin;
     const resetUrl = `${base}/reset?token=${token}`;
 
+    // Try to send email (dev fallback logs if no env)
+    try {
+      const { subject, html, text } = makeResetEmail(resetUrl);
+      await sendEmail({ to: user.email as string, subject, html, text });
+    } catch (e) {
+      console.warn("sendEmail failed:", e);
+      // We still return ok; resetUrl included below for manual copy.
+    }
+
     return NextResponse.json({
       ok: true,
-      resetUrl,        // (dev) you can copy this; later send via email provider
+      resetUrl,        // (dev) copy manually if needed
       expiresAt,
     });
   } catch (e: any) {
