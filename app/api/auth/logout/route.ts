@@ -1,30 +1,29 @@
-import { NextRequest, NextResponse } from "next/server";
+// app/api/auth/logout/route.ts
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getDb } from "@/lib/mongo";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export async function POST() {
+  try {
+    const token = cookies().get("session_token")?.value;
 
-export async function POST(req: NextRequest) {
-  const sid = req.cookies.get("sid")?.value;
-
-  // Optional: remove server-side session
-  if (sid) {
-    try {
+    if (token) {
       const db = await getDb();
-      await db.collection("sessions").deleteOne({ token: sid });
-    } catch {
-      /* ignore */
+      await db.collection("sessions").deleteOne({ token });
     }
-  }
 
-  // Clear cookie and redirect to login
-  const res = NextResponse.json({ ok: true, redirect: "/login" });
-  res.cookies.set("sid", "", {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    expires: new Date(0),
-  });
-  return res;
+    // Clear cookie by setting it expired
+    cookies().set("session_token", "", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("Logout error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
 }

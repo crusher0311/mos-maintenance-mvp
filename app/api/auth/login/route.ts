@@ -1,130 +1,55 @@
 // app/api/auth/login/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import crypto from "node:crypto";
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import { getDb } from "@/lib/mongo";
-import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
+import { sessionCookieOptions } from "@/lib/auth";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const body = await safeJson(req);
-    const email = String(body?.email || "").trim().toLowerCase();
-    const password = String(body?.password || "");
-    const shopIdRaw = body?.shopId;
-    const shopIdNum = Number(shopIdRaw);
-    const hasShopId = Number.isFinite(shopIdNum);
+    const { email, password, shopId } = await req.json();
 
     if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email and password are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
     }
 
     const db = await getDb();
-    const users = db.collection("users");
-    const sessions = db.collection("sessions");
 
-    // Find user (optionally scoped by shop)
-    let user: any = null;
-    if (hasShopId) {
-      user = await users.findOne({ emailLower: email, shopId: shopIdNum });
-      if (!user) {
-        return NextResponse.json(
-          { error: "Invalid email or password" },
-          { status: 401 }
-        );
-      }
-    } else {
-      // No shopId provided — ensure email is unique across shops
-      const found = await users.find({ emailLower: email }).limit(2).toArray();
-      if (found.length === 0) {
-        return NextResponse.json(
-          { error: "Invalid email or password" },
-          { status: 401 }
-        );
-      }
-      if (found.length > 1) {
-        return NextResponse.json(
-          {
-            error:
-              "Multiple accounts found for this email. Please provide your Shop ID.",
-          },
-          { status: 409 }
-        );
-      }
-      user = found[0];
+    // 1) Find user (optionally by shop)
+    const user = await db.collection("users").findOne(
+      { email: String(email).toLowerCase(), ...(shopId ? { shopId: Number(shopId) } : {}) },
+      { projection: { _id: 1, email: 1, role: 1, passwordHash: 1, shopId: 1 } }
+    );
+    if (!user) {
+      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    // Verify password (format: "scrypt:1:<salt>:<hash>")
-    if (!user?.passwordHash || !user.passwordHash.startsWith("scrypt:1:")) {
-      return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
-      );
-    }
-    const ok = await verifyScrypt(password, user.passwordHash);
+    // 2) Check password
+    const ok = await bcrypt.compare(String(password), String(user.passwordHash));
     if (!ok) {
-      return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    // Create session
-    const now = new Date();
-    const token = crypto.randomBytes(24).toString("hex"); // 48-char token
-    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    // 3) Create session in DB
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30); // 30 days
 
-    await sessions.insertOne({
+    await db.collection("sessions").insertOne({
       token,
       userId: user._id,
-      shopId: user.shopId,
-      createdAt: now,
+      shopId: Number(user.shopId ?? shopId ?? 0),
+      createdAt: new Date(),
       expiresAt,
     });
 
-    const res = NextResponse.json({
-      ok: true,
-      redirect: "/dashboard",
-      shopId: user.shopId,
-      role: user.role,
-    });
+    // 4) Set cookie
+    const cookieOpts = sessionCookieOptions(60 * 60 * 24 * 30);
+    cookies().set("session_token", token, cookieOpts);
 
-    // IMPORTANT: cookie name matches lib/auth.ts
-    res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
-
-    return res;
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("Login error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
-}
-
-async function safeJson(req: NextRequest) {
-  try {
-    return await req.json();
-  } catch {
-    return null;
-  }
-}
-
-async function verifyScrypt(password: string, stored: string): Promise<boolean> {
-  // "scrypt:1:<salt>:<hexHash>"
-  const [, , salt, hexHash] = stored.split(":");
-  if (!salt || !hexHash) return false;
-
-  const derived = await new Promise<Buffer>((resolve, reject) => {
-    crypto.scrypt(password, salt, 64, (err, buf) =>
-      err ? reject(err) : resolve(buf)
-    );
-  });
-
-  const a = Buffer.from(hexHash, "hex");
-  const b = derived;
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }

@@ -1,10 +1,10 @@
 // lib/auth.ts
-import 'server-only';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-import { getDb } from '@/lib/mongo';
+import "server-only";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { getDb } from "@/lib/mongo";
 
-export const SESSION_COOKIE = 'session_token';
+export const SESSION_COOKIE = "session_token";
 
 export type SessionInfo = {
   token: string;
@@ -18,13 +18,13 @@ export async function getSession(): Promise<SessionInfo | null> {
   if (!token) return null;
 
   const db = await getDb();
-  const sess = await db.collection('sessions').findOne({
+  const sess = await db.collection("sessions").findOne({
     token,
     expiresAt: { $gt: new Date() },
   });
   if (!sess) return null;
 
-  const user = await db.collection('users').findOne(
+  const user = await db.collection("users").findOne(
     { _id: sess.userId },
     { projection: { email: 1, role: 1 } }
   );
@@ -32,25 +32,24 @@ export async function getSession(): Promise<SessionInfo | null> {
 
   return {
     token,
-    shopId: sess.shopId as number,
-    email: user.email as string,
-    role: (user.role as string) || 'owner',
+    shopId: Number(sess.shopId),
+    email: String(user.email),
+    role: String(user.role ?? "owner"),
   };
 }
 
 export async function requireSession(): Promise<SessionInfo> {
   const s = await getSession();
-  if (!s) redirect('/login');
+  if (!s) redirect("/login");
   return s;
 }
 
-// Optional: use this in API routes when setting the cookie
 export function sessionCookieOptions(maxAgeSeconds = 60 * 60 * 24 * 30) {
   return {
     httpOnly: true as const,
     secure: true as const,
-    sameSite: 'lax' as const,
-    path: '/',
+    sameSite: "lax" as const,
+    path: "/",
     maxAge: maxAgeSeconds,
   };
 }

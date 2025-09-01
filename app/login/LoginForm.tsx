@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginForm() {
@@ -12,15 +11,7 @@ export default function LoginForm() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
 
-  const { status } = useSession();
   const router = useRouter();
-
-  // Client safety net: if already authed, leave /login
-  useEffect(() => {
-    if (status === "authenticated") {
-      router.replace("/dashboard/customers");
-    }
-  }, [status, router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,19 +21,34 @@ export default function LoginForm() {
     setMsg("");
 
     try {
-      const res = await signIn("credentials", {
+      const body: Record<string, unknown> = {
         email: email.trim().toLowerCase(),
         password,
-        // Pass through optional Shop ID if your credentials provider expects it
-        shopId: shopId.trim() || undefined,
-        redirect: false, // handle navigation manually
-        callbackUrl: "/dashboard/customers",
+      };
+      if (shopId.trim()) body.shopId = Number(shopId.trim());
+
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
 
-      if (!res) throw new Error("No response from signIn");
-      if (res.error) throw new Error(res.error);
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // ignore parse error
+      }
 
-      router.replace(res.url ?? "/dashboard/customers");
+      if (!res.ok) {
+        const errMsg =
+          (data && (data.error || data.message)) ||
+          `Login failed (HTTP ${res.status})`;
+        throw new Error(errMsg);
+      }
+
+      // On success → go to dashboard
+      router.replace("/dashboard/customers");
     } catch (err: any) {
       setMsg("❌ " + (err?.message || "Login failed"));
     } finally {

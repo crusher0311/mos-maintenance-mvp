@@ -1,24 +1,18 @@
 // middleware.ts (repo root)
 import { NextResponse, NextRequest } from "next/server";
-
 const SESSION_COOKIE = "session_token";
-
 const PUBLIC_PATHS = ["/", "/login", "/forgot", "/reset", "/setup"];
 
 function isPublicPath(pathname: string) {
   if (PUBLIC_PATHS.includes(pathname)) return true;
-  // Let APIs handle their own auth
-  if (pathname.startsWith("/api/")) return true;
+  if (pathname.startsWith("/api/")) return true; // APIs handle their own auth
   return false;
 }
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-
-  // Only protect non-public paths matched by config
   if (isPublicPath(pathname)) return NextResponse.next();
 
-  // Coarse check: presence of our session cookie
   const hasSession = req.cookies.get(SESSION_COOKIE)?.value;
   if (!hasSession) {
     const url = req.nextUrl.clone();
@@ -26,15 +20,9 @@ export function middleware(req: NextRequest) {
     url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);
   }
-
   return NextResponse.next();
 }
 
-// Run middleware only where auth is required.
-// Add other protected sections as needed.
 export const config = {
-  matcher: [
-    "/dashboard/:path*", // protect dashboard
-    // add more protected roots here, e.g. "/settings/:path*"
-  ],
+  matcher: ["/dashboard/:path*"], // protect dashboard
 };
