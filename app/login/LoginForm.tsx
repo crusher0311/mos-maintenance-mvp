@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [shopId, setShopId] = useState(""); // optional
+  // Optional: include Shop ID if the same email might exist on multiple shops
+  const [shopId, setShopId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
 
   const router = useRouter();
+  const search = useSearchParams();
+  const next = search.get("next") || "/dashboard/customers";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,9 +26,10 @@ export default function LoginForm() {
     try {
       const body: Record<string, unknown> = {
         email: email.trim().toLowerCase(),
-        password,
+        password, // don't trim passwords
       };
-      if (shopId.trim()) body.shopId = Number(shopId.trim());
+      const sid = shopId.trim();
+      if (sid) body.shopId = Number(sid);
 
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -37,18 +41,20 @@ export default function LoginForm() {
       try {
         data = await res.json();
       } catch {
-        // ignore parse error
+        // ignore JSON parse errors
       }
 
       if (!res.ok) {
-        const errMsg =
+        const err =
           (data && (data.error || data.message)) ||
           `Login failed (HTTP ${res.status})`;
-        throw new Error(errMsg);
+        throw new Error(err);
       }
 
-      // On success → go to dashboard
-      router.replace("/dashboard/customers");
+      // Prefer server-provided redirect; else go to ?next or dashboard
+      const dest = (data && data.redirect) || next || "/dashboard/customers";
+      // Use client-side navigation
+      router.replace(dest);
     } catch (err: any) {
       setMsg("❌ " + (err?.message || "Login failed"));
     } finally {
@@ -80,6 +86,7 @@ export default function LoginForm() {
         disabled={busy}
       />
 
+      {/* Optional if you expect duplicate emails across shops */}
       <input
         type="text"
         className="w-full border rounded p-2"
