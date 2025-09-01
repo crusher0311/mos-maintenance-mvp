@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     const sessions     = db.collection("sessions");
     const pwresets     = db.collection("password_resets");
     const ratelimits   = db.collection("ratelimits");
+    const events       = db.collection("events");
 
     async function dropConflictingIndex(
       coll: any,
@@ -143,6 +144,21 @@ export async function POST(req: NextRequest) {
       { expireAfterSeconds: 0, name: "ratelimit_ttl" }
     );
 
+    // ---- events (for webhook console)
+    await dropConflictingIndex(events, { shopId: 1, receivedAt: -1 }, "events_shop_receivedAt");
+    await ensureIndex(
+      events,
+      { shopId: 1, receivedAt: -1 },
+      { name: "events_shop_receivedAt" }
+    );
+
+    await dropConflictingIndex(events, { receivedAt: -1 }, "events_receivedAt");
+    await ensureIndex(
+      events,
+      { receivedAt: -1 },
+      { name: "events_receivedAt" }
+    );
+
     const counterNow = await counters.findOne({ _id: "shopId" });
     return NextResponse.json({
       ok: true,
@@ -159,6 +175,8 @@ export async function POST(req: NextRequest) {
         "password_resets.expiresAt (TTL)",
         "ratelimits.bucketKey (unique)",
         "ratelimits.expiresAt (TTL)",
+        "events {shopId,receivedAt:-1}",
+        "events {receivedAt:-1}",
       ],
       counter: counterNow,
       maxExisting,
