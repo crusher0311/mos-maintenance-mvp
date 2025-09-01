@@ -1,3 +1,4 @@
+// lib/rate.ts
 import { getDb } from "@/lib/mongo";
 
 export type RateResult = {
@@ -26,22 +27,22 @@ export async function rateLimit(opts: {
   const bucket = Math.floor(nowMs / (windowSeconds * 1000));
   const bucketKey = `${id}:${bucket}`;
   const resetAt = new Date((bucket + 1) * windowSeconds * 1000);
-  const expiresAt = new Date(resetAt.getTime() + 5000); // small buffer so doc disappears after window
+  // small buffer so the doc disappears shortly after the window ends
+  const expiresAt = new Date(resetAt.getTime() + 5000);
 
-  // Atomically increment the count for this bucket
+  // IMPORTANT: do NOT $setOnInsert `count`. Let $inc create it as 1.
   const result = await col.findOneAndUpdate(
     { bucketKey },
     {
       $inc: { count: 1 },
       $setOnInsert: {
         bucketKey,
-        count: 0,            // becomes 1 after $inc on insert
         windowSeconds,
         createdAt: new Date(),
         expiresAt,
       },
     },
-    { upsert: true, returnDocument: "after" as const }
+    { upsert: true, returnDocument: "after" }
   );
 
   const doc: any = (result as any)?.value ?? (result as any);
@@ -56,8 +57,8 @@ export async function rateLimit(opts: {
   };
 }
 
+// Best-effort client IP extraction behind proxies
 export function clientIp(req: Request): string {
-  // On Vercel/Node, use X-Forwarded-For; take the first IP
   const xff = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim();
   return xff || "unknown";
 }
