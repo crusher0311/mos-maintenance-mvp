@@ -2,7 +2,7 @@
 import { requireSession } from "@/lib/auth";
 import { getDb } from "@/lib/mongo";
 
-export const dynamic = "force-dynamic"; // ensure cookies read on each request
+export const dynamic = "force-dynamic";
 
 type Customer = {
   _id: string;
@@ -22,15 +22,11 @@ export default async function CustomersPage() {
   const { shopId, email } = await requireSession();
   const db = await getDb();
 
-  // Show ONLY active customers (not explicitly closed)
   const customers = (await db
     .collection("customers")
     .find({
       shopId,
-      $or: [
-        { lastStatus: { $exists: false } },
-        { lastStatus: { $ne: "Close" } },
-      ],
+      $or: [{ lastStatus: { $exists: false } }, { lastStatus: { $ne: "Close" } }],
     })
     .project({
       name: 1,
@@ -72,40 +68,73 @@ export default async function CustomersPage() {
             Showing {customers.length} most recent active customers
           </p>
           <ul className="divide-y border rounded">
-            {customers.map((c) => (
-              <li key={c._id} className="p-3 space-y-1">
-                <div className="font-medium">{c.name || "(no name)"}</div>
+            {customers.map((c) => {
+              const customerHref = c.externalId
+                ? `/dashboard/customers/${encodeURIComponent(c.externalId)}`
+                : undefined;
+              const vehicleHref =
+                c.externalId && c.lastVin
+                  ? `/dashboard/customers/${encodeURIComponent(
+                      c.externalId
+                    )}/vehicles/${encodeURIComponent(c.lastVin)}`
+                  : undefined;
 
-                <div className="text-sm text-gray-700">
-                  {c.email || "—"} · {c.phone || "—"} · ext:{" "}
-                  {c.externalId || "—"}
-                </div>
-
-                {(c.lastVin || c.lastRo || c.lastMileage != null) && (
-                  <div className="text-sm">
-                    {c.lastVin ? `VIN: ${c.lastVin}` : ""}
-                    {c.lastVin && (c.lastRo || c.lastMileage != null) ? " · " : ""}
-                    {c.lastRo ? `RO#: ${c.lastRo}` : ""}
-                    {c.lastRo && c.lastMileage != null ? " · " : ""}
-                    {c.lastMileage != null ? `Miles: ${c.lastMileage}` : ""}
+              return (
+                <li key={c._id} className="p-3 space-y-1">
+                  <div className="font-medium">
+                    {customerHref ? (
+                      <a className="underline" href={customerHref}>
+                        {c.name || "(no name)"}
+                      </a>
+                    ) : (
+                      c.name || "(no name)"
+                    )}
                   </div>
-                )}
 
-                {c.lastStatus && (
+                  <div className="text-sm text-gray-700">
+                    {c.email || "—"} · {c.phone || "—"} · ext:{" "}
+                    {c.externalId || "—"}
+                  </div>
+
+                  {(c.lastVin || c.lastRo || c.lastMileage != null) && (
+                    <div className="text-sm">
+                      {c.lastVin ? (
+                        vehicleHref ? (
+                          <>
+                            VIN:{" "}
+                            <a className="underline" href={vehicleHref}>
+                              {c.lastVin}
+                            </a>
+                          </>
+                        ) : (
+                          `VIN: ${c.lastVin}`
+                        )
+                      ) : (
+                        ""
+                      )}
+                      {c.lastVin && (c.lastRo || c.lastMileage != null) ? " · " : ""}
+                      {c.lastRo ? `RO#: ${c.lastRo}` : ""}
+                      {c.lastRo && c.lastMileage != null ? " · " : ""}
+                      {c.lastMileage != null ? `Miles: ${c.lastMileage}` : ""}
+                    </div>
+                  )}
+
+                  {c.lastStatus && (
+                    <div className="text-xs text-gray-500">
+                      Status: {c.lastStatus}
+                    </div>
+                  )}
+
                   <div className="text-xs text-gray-500">
-                    Status: {c.lastStatus}
+                    {c.updatedAt
+                      ? `Updated ${new Date(c.updatedAt).toLocaleString()}`
+                      : c.createdAt
+                      ? `Created ${new Date(c.createdAt).toLocaleString()}`
+                      : ""}
                   </div>
-                )}
-
-                <div className="text-xs text-gray-500">
-                  {c.updatedAt
-                    ? `Updated ${new Date(c.updatedAt).toLocaleString()}`
-                    : c.createdAt
-                    ? `Created ${new Date(c.createdAt).toLocaleString()}`
-                    : ""}
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
