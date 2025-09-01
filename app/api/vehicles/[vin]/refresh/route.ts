@@ -61,7 +61,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
     const db = await getDb();
     const now = new Date();
 
-    // Find most recent ticket for this VIN to get RO#
+    // Most recent ticket for RO#
     const ticket = await db.collection("tickets").findOne(
       { shopId, vin },
       { sort: { updatedAt: -1 }, projection: { roNumber: 1 } }
@@ -78,7 +78,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       updatedAt: now,
     });
 
-    // Step 1: DVI import (only if we have an RO#)
+    // Step 1: DVI import (if we have RO)
     let dviSummary: any = { skipped: true };
     if (ro) {
       try {
@@ -107,21 +107,21 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       });
     }
 
-    // (Future) Step 2: DataOne VIN decode
-    // (Future) Step 3: Carfax
-    // (Future) Step 4: AI recommendations
-
     await db.collection("jobs").updateMany(
       { type: "vehicle-refresh", shopId, vin, customerExternalId, status: "running" },
       { $set: { status: "done", updatedAt: new Date() } }
     );
 
     if (req.method === "POST") {
-      return NextResponse.redirect(
-        `/dashboard/customers/${encodeURIComponent(customerExternalId)}/vehicles/${encodeURIComponent(vin)}`,
-        { status: 303 }
-      );
+      // ✅ Use absolute URL for redirect
+      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://mos-maintenance-mvp.vercel.app";
+      const redirectUrl = `${baseUrl}/dashboard/customers/${encodeURIComponent(
+        customerExternalId
+      )}/vehicles/${encodeURIComponent(vin)}`;
+
+      return NextResponse.redirect(redirectUrl, { status: 303 });
     }
+
     return NextResponse.json({
       ok: true,
       vin,
@@ -131,7 +131,6 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
     });
   } catch (err: any) {
     console.error("vehicle refresh error", err);
-    // Surface the message so you can see what's wrong in the browser/Network tab
     return NextResponse.json({ error: "Server error", details: String(err?.message || err) }, { status: 500 });
   }
 }
