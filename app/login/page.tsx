@@ -1,14 +1,14 @@
+// app/login/page.tsx
 import { Suspense } from "react";
 import LoginForm from "./LoginForm";
 import { redirect } from "next/navigation";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth"; // <- adjust if your options live elsewhere
+import { getSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
-  // Server-side: if already authenticated, skip rendering the form
-  const session = await getServerSession(authOptions);
+  // Use your custom helper instead of NextAuth's getServerSession
+  const session = await getSession();
   if (session) redirect("/dashboard/customers");
 
   return (
