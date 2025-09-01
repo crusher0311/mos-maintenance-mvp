@@ -7,7 +7,6 @@ import { useState } from "react";
 export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // Optional: include Shop ID if the same email might exist on multiple shops
   const [shopId, setShopId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
@@ -26,7 +25,7 @@ export default function LoginForm() {
     try {
       const body: Record<string, unknown> = {
         email: email.trim().toLowerCase(),
-        password, // don't trim passwords
+        password,
       };
       const sid = shopId.trim();
       if (sid) body.shopId = Number(sid);
@@ -38,11 +37,7 @@ export default function LoginForm() {
       });
 
       let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        // ignore JSON parse errors
-      }
+      try { data = await res.json(); } catch {}
 
       if (!res.ok) {
         const err =
@@ -51,9 +46,7 @@ export default function LoginForm() {
         throw new Error(err);
       }
 
-      // Prefer server-provided redirect; else go to ?next or dashboard
       const dest = (data && data.redirect) || next || "/dashboard/customers";
-      // Use client-side navigation
       router.replace(dest);
     } catch (err: any) {
       setMsg("❌ " + (err?.message || "Login failed"));
@@ -74,7 +67,6 @@ export default function LoginForm() {
         required
         disabled={busy}
       />
-
       <input
         type="password"
         className="w-full border rounded p-2"
@@ -85,8 +77,6 @@ export default function LoginForm() {
         required
         disabled={busy}
       />
-
-      {/* Optional if you expect duplicate emails across shops */}
       <input
         type="text"
         className="w-full border rounded p-2"
@@ -98,7 +88,6 @@ export default function LoginForm() {
         disabled={busy}
         title="If your email is used in more than one shop, enter your Shop ID."
       />
-
       <button
         type="submit"
         disabled={busy || !email || !password}
@@ -106,18 +95,12 @@ export default function LoginForm() {
       >
         {busy ? "Signing in…" : "Sign in"}
       </button>
-
       <div className="mt-2 text-sm">
         <Link href="/forgot" className="underline hover:no-underline">
           Forgot password?
         </Link>
       </div>
-
-      {msg && (
-        <div className="text-sm whitespace-pre-wrap" aria-live="polite">
-          {msg}
-        </div>
-      )}
+      {msg && <div className="text-sm whitespace-pre-wrap" aria-live="polite">{msg}</div>}
     </form>
   );
 }
