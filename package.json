@@ -4,10 +4,10 @@
     "private": true,
     "scripts": {
         "dev": "next dev",
-        "build": "next build --turbopack",
+        "build": "next build",
         "start": "next start",
         "lint": "eslint",
-        "vercel-build": "next build --turbopack"
+        "vercel-build": "next build"
     },
     "dependencies": {
         "@auth/mongodb-adapter": "^3.10.0",
