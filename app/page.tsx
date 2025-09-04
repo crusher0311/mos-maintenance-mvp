@@ -1,6 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+type AutoflowLog = {
+  token: string;
+  receivedAt: string;
+  payload?: any;
+  raw?: string;
+};
 
 export default function Home() {
   const [shopName, setShopName] = useState("");
@@ -102,6 +109,55 @@ export default function Home() {
     }
   }
 
+  // ===== Recent AutoFlow Events (no-cache fetch) =====
+  const [events, setEvents] = useState<AutoflowLog[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [limit, setLimit] = useState(25);
+
+  const lastFetch = useRef<number>(0);
+
+  const recentEndpoint = useMemo(() => {
+    // Add a ts bust param to avoid any intermediary caches
+    const ts = Date.now();
+    return `/api/events/autoflow/recent?limit=${limit}&ts=${ts}`;
+  }, [limit]);
+
+  async function loadRecent(logSuccess = false) {
+    try {
+      setEventsLoading(true);
+      lastFetch.current = Date.now();
+      const res = await fetch(recentEndpoint, {
+        // In-browser fetch: ask for no store; server route also sends Cache-Control: no-store
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || JSON.stringify(data));
+      setEvents(Array.isArray(data?.logs) ? data.logs : []);
+      if (logSuccess) logLine("✅ Fetched recent AutoFlow events");
+    } catch (e: any) {
+      logLine(`❌ Fetch recent events failed: ${e.message || e}`);
+    } finally {
+      setEventsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // initial fetch
+    loadRecent(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentEndpoint]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(() => loadRecent(false), 7000);
+    return () => clearInterval(id);
+  }, [autoRefresh, recentEndpoint]);
+
+  const fmt = (d?: string) =>
+    d ? new Date(d).toLocaleString() : "";
+
   return (
     <main className="mx-auto max-w-3xl p-6 space-y-8">
       <h1 className="text-2xl font-bold">MOS Maintenance MVP</h1>
@@ -122,8 +178,12 @@ export default function Home() {
         </div>
 
         <div className="text-sm text-gray-700 space-y-1">
-          <div>Shop ID: <code>{shopId}</code></div>
-          <div>Webhook Token: <code>{webhookToken}</code></div>
+          <div>
+            Shop ID: <code>{shopId}</code>
+          </div>
+          <div>
+            Webhook Token: <code>{webhookToken}</code>
+          </div>
 
           {/* Copyable Webhook URL for AutoFlow */}
           {webhookToken && (
@@ -195,6 +255,90 @@ export default function Home() {
         </button>
       </section>
 
+      {/* Recent Events (no-cache) */}
+      <section className="rounded-2xl border p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">4) Recent AutoFlow Events</h2>
+          <div className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-1">
+              <span className="text-gray-600">Limit</span>
+              <select
+                className="border rounded px-2 py-1"
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value) || 25)}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+              />
+              <span className="text-gray-600">Auto refresh</span>
+            </label>
+            <button
+              className="rounded bg-black text-white px-3 py-1.5"
+              onClick={() => loadRecent(true)}
+              disabled={eventsLoading}
+              title="Fetches with cache: 'no-store' and a ts param"
+            >
+              {eventsLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        <div className="text-xs text-gray-500">
+          Last fetch: {lastFetch.current ? new Date(lastFetch.current).toLocaleTimeString() : "—"}
+        </div>
+
+        {events.length === 0 ? (
+          <div className="text-sm text-gray-600">No events found yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {events.map((e, i) => {
+              const t = e?.payload?.text as string | undefined;
+              const eventType = e?.payload?.event?.type as string | undefined;
+              const cust =
+                e?.payload?.customer
+                  ? `${e.payload.customer.firstname ?? ""} ${e.payload.customer.lastname ?? ""}`.trim()
+                  : "";
+              const veh = e?.payload?.vehicle
+                ? `${e.payload.vehicle.year ?? ""} ${e.payload.vehicle.make ?? ""} ${e.payload.vehicle.model ?? ""}`.trim()
+                : "";
+              return (
+                <div key={i} className="rounded-xl border p-3 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="font-medium">
+                        {t || eventType || "(event)"}{" "}
+                        <span className="text-gray-500 font-normal">· token {e.token}</span>
+                      </div>
+                      <div className="text-gray-600">
+                        {cust && <span>{cust}</span>}
+                        {cust && veh && <span> · </span>}
+                        {veh && <span>{veh}</span>}
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500">{fmt(e.receivedAt)}</div>
+                  </div>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs underline">Show JSON</summary>
+                    <pre className="mt-1 max-h-64 overflow-auto bg-gray-50 p-2 rounded text-xs">
+                      {JSON.stringify(e.payload ?? e, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* Admin */}
       <section className="rounded-2xl border p-5 space-y-3">
         <h2 className="text-lg font-semibold">Admin (optional)</h2>
@@ -221,4 +365,3 @@ export default function Home() {
     </main>
   );
 }
-
