@@ -3,6 +3,28 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import { getSession } from "@/lib/auth";
 
+export async function GET() {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const db = await getDb();
+    const customers = await db
+      .collection("customers")
+      .find({ shopId: session.shopId })
+      .sort({ createdAt: -1 }) // newest first
+      // .limit(50) // you can uncomment this if you want to cap the results
+      .toArray();
+
+    return NextResponse.json({ ok: true, customers });
+  } catch (err) {
+    console.error("Fetch customers error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const session = await getSession();
@@ -42,4 +64,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
-
