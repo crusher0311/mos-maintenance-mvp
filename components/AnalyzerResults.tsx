@@ -4,7 +4,6 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { motion } from "framer-motion";
 
 type SourceRef = { type: "DVI" | "CARFAX" | "OE"; id_or_ref: string; note?: string };
 type Recommendation = {
@@ -37,7 +36,7 @@ export default function AnalyzerResults({ analysis }: { analysis: Analysis }) {
   );
 
   return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+    <div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
@@ -89,4 +88,5 @@ export default function AnalyzerResults({ analysis }: { analysis: Analysis }) {
                 <div className="flex flex-wrap gap-2">
                   {r.sources.map((s, idx) => (
                     <Badge key={idx} variant="outline" className="t
+
 
