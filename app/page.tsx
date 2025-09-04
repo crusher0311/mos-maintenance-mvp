@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -49,9 +49,9 @@ export default function Home() {
 
       setShopId(String(sid));
       setWebhookToken(wt);
-      logLine(`✅ Shop created: ${sid}`);
+      logLine(`âœ… Shop created: ${sid}`);
     } catch (e: any) {
-      logLine(`❌ Create Shop failed: ${e.message || e}`);
+      logLine(`âŒ Create Shop failed: ${e.message || e}`);
     }
   }
 
@@ -69,9 +69,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(data));
-      logLine(`✅ Credentials saved for shop ${shopId}`);
+      logLine(`âœ… Credentials saved for shop ${shopId}`);
     } catch (e: any) {
-      logLine(`❌ Save Creds failed: ${e.message || e}`);
+      logLine(`âŒ Save Creds failed: ${e.message || e}`);
     }
   }
 
@@ -87,9 +87,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(data));
-      logLine(`✅ Webhook OK: ${JSON.stringify(data)}`);
+      logLine(`âœ… Webhook OK: ${JSON.stringify(data)}`);
     } catch (e: any) {
-      logLine(`❌ Webhook failed: ${e.message || e}`);
+      logLine(`âŒ Webhook failed: ${e.message || e}`);
     }
   }
 
@@ -103,9 +103,9 @@ export default function Home() {
       });
       const txt = await res.text();
       if (!res.ok) throw new Error(txt);
-      logLine(`✅ DB Indexes: ${txt}`);
+      logLine(`âœ… DB Indexes: ${txt}`);
     } catch (e: any) {
-      logLine(`❌ DB Indexes failed: ${e.message || e}`);
+      logLine(`âŒ DB Indexes failed: ${e.message || e}`);
     }
   }
 
@@ -135,9 +135,9 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || JSON.stringify(data));
       setEvents(Array.isArray(data?.logs) ? data.logs : []);
-      if (logSuccess) logLine("✅ Fetched recent AutoFlow events");
+      if (logSuccess) logLine("âœ… Fetched recent AutoFlow events");
     } catch (e: any) {
-      logLine(`❌ Fetch recent events failed: ${e.message || e}`);
+      logLine(`âŒ Fetch recent events failed: ${e.message || e}`);
     } finally {
       setEventsLoading(false);
     }
@@ -196,9 +196,9 @@ export default function Home() {
                   onClick={async () => {
                     try {
                       await navigator.clipboard.writeText(webhookUrl);
-                      logLine("✅ Copied webhook URL");
+                      logLine("âœ… Copied webhook URL");
                     } catch {
-                      logLine("❌ Copy failed");
+                      logLine("âŒ Copy failed");
                     }
                   }}
                 >
@@ -206,7 +206,7 @@ export default function Home() {
                 </button>
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                Paste this into AutoFlow’s Webhook/Callback URL for this shop.
+                Paste this into AutoFlowâ€™s Webhook/Callback URL for this shop.
               </div>
             </div>
           )}
@@ -287,13 +287,13 @@ export default function Home() {
               disabled={eventsLoading}
               title="Fetches with cache: 'no-store' and a ts param"
             >
-              {eventsLoading ? "Refreshing…" : "Refresh"}
+              {eventsLoading ? "Refreshingâ€¦" : "Refresh"}
             </button>
           </div>
         </div>
 
         <div className="text-xs text-gray-500">
-          Last fetch: {lastFetch.current ? new Date(lastFetch.current).toLocaleTimeString() : "—"}
+          Last fetch: {lastFetch.current ? new Date(lastFetch.current).toLocaleTimeString() : "â€”"}
         </div>
 
         {events.length === 0 ? (
@@ -316,11 +316,11 @@ export default function Home() {
                     <div className="space-y-0.5">
                       <div className="font-medium">
                         {t || eventType || "(event)"}{" "}
-                        <span className="text-gray-500 font-normal">· token {e.token}</span>
+                        <span className="text-gray-500 font-normal">Â· token {e.token}</span>
                       </div>
                       <div className="text-gray-600">
                         {cust && <span>{cust}</span>}
-                        {cust && veh && <span> · </span>}
+                        {cust && veh && <span> Â· </span>}
                         {veh && <span>{veh}</span>}
                       </div>
                     </div>
@@ -365,3 +365,5 @@ export default function Home() {
     </main>
   );
 }
+
+
