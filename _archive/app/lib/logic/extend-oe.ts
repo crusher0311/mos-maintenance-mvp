@@ -51,7 +51,7 @@ function inferOriginalInterval(miles: number[]): number | null {
 }
 
 /**
- * Extends a VdbResponse's maintenance list up to "multiplier × OEM max mileage".
+ * Extends a VdbResponse's maintenance list up to "multiplier Ã— OEM max mileage".
  * For each service, after the OEM max:
  *   - If override exists -> use that miles interval.
  *   - Else if NOT exempt -> use floor(originalInterval * factor) (>= 1k safety).
@@ -140,3 +140,4 @@ export function extendVdbMaintenance(
 
   return extended;
 }
+

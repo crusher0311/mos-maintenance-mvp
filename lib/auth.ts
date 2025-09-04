@@ -14,7 +14,9 @@ export type SessionInfo = {
 };
 
 export async function getSession(): Promise<SessionInfo | null> {
-  const token = cookies().get(SESSION_COOKIE)?.value;
+  // ✅ Next.js 15: await cookies()
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
   const db = await getDb();

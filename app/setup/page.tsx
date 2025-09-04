@@ -11,9 +11,10 @@ export default function SetupPage() {
         Enter your email & password to create the first user for this shop.
       </p>
 
-      <Suspense fallback={<div className="text-sm text-gray-500">Loading setup form…</div>}>
+      <Suspense fallback={<div className="text-sm text-gray-500">Loading setup formâ€¦</div>}>
         <SetupForm />
       </Suspense>
     </main>
   );
 }
+

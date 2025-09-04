@@ -27,10 +27,10 @@ export default function ResetForm() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Reset failed");
-      setMsg("✅ Password updated. You are signed in.");
+      setMsg("âœ… Password updated. You are signed in.");
       // window.location.href = data.redirect || "/dashboard";
     } catch (e: any) {
-      setMsg("❌ " + (e?.message || "Error"));
+      setMsg("âŒ " + (e?.message || "Error"));
     } finally {
       setBusy(false);
     }
@@ -51,9 +51,10 @@ export default function ResetForm() {
         className="rounded bg-black text-white px-4 py-2 disabled:opacity-50"
         disabled={busy || !token || !password}
       >
-        {busy ? "Saving…" : "Reset Password"}
+        {busy ? "Savingâ€¦" : "Reset Password"}
       </button>
       {msg && <div className="text-sm whitespace-pre-wrap">{msg}</div>}
     </form>
   );
 }
+

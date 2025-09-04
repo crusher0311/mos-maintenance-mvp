@@ -107,7 +107,7 @@ export function buildPlan(
       // expected up to horizon:
       occurrencesExpected = Math.floor(horizon / interval);
 
-      // compute next due: if we have a lastDoneAt, add interval; else nearest grid ≥ current
+      // compute next due: if we have a lastDoneAt, add interval; else nearest grid â‰¥ current
       if (lastDoneAt !== null) {
         const n = lastDoneAt + interval;
         nextDueAt = n;
@@ -178,3 +178,4 @@ export function buildPlan(
 
   return items;
 }
+

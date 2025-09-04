@@ -1,4 +1,4 @@
-﻿// app/api/admin/db-indexes/route.ts
+// app/api/admin/db-indexes/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 
@@ -108,3 +108,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err?.message || "Unknown error" }, { status: 500 });
   }
 }
+

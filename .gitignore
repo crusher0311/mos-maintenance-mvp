@@ -59,3 +59,22 @@ ngrok.log
 .dataone_work/
 DataOne_US_LDV_Data.zip
 `r`n.dataone_work/
+.env*.local
+node_modules/
+.next/
+.env*
+.vercel/
+*.log
+# DataOne bulk data (keep local only)
+.dataone/*
+!.dataone/README.md
+
+# Env & Vercel
+.env*
+.vercel/
+
+# Node/Next/OS artifacts
+node_modules/
+.next/
+*.log
+.DS_Store

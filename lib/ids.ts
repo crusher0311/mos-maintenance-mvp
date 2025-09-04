@@ -48,3 +48,4 @@ export async function getNextShopId(): Promise<number> {
   }
   return seq as number;
 }
+

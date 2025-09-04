@@ -34,9 +34,9 @@ export default function InvitePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed");
       setInviteUrl(data.inviteUrl);
-      setMsg("✅ Invite created");
+      setMsg("âœ… Invite created");
     } catch (e: any) {
-      setMsg("❌ " + (e?.message || "Error"));
+      setMsg("âŒ " + (e?.message || "Error"));
     } finally {
       setBusy(false);
     }
@@ -121,3 +121,4 @@ export default function InvitePage() {
     </main>
   );
 }
+

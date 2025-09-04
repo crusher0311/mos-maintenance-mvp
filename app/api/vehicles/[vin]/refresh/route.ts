@@ -14,31 +14,31 @@ async function readInputs(req: NextRequest, vinParam: string) {
     try {
       const fd = await req.formData();
       const shopId = Number(fd.get("shopId"));
-      const customerExternalId = String(fd.get("customerExternalId") || "");
-      if (vin && Number.isFinite(shopId) && customerExternalId) {
-        return { vin, shopId, customerExternalId };
+      const customerId = String(fd.get("customerId") || "");
+      if (vin && Number.isFinite(shopId) && customerId) {
+        return { vin, shopId, customerId };
       }
     } catch {}
     // Fallback to JSON body
     try {
       const j = await req.json();
       const shopId = Number(j?.shopId);
-      const customerExternalId = j?.customerExternalId ? String(j.customerExternalId) : "";
-      if (vin && Number.isFinite(shopId) && customerExternalId) {
-        return { vin, shopId, customerExternalId };
+      const customerId = j?.customerId ? String(j.customerId) : "";
+      if (vin && Number.isFinite(shopId) && customerId) {
+        return { vin, shopId, customerId };
       }
     } catch {}
-    return { error: "Missing vin/shopId/customerExternalId in POST body." };
+    return { error: "Missing vin/shopId/customerId in POST body." };
   }
 
   if (req.method === "GET") {
     const qp = req.nextUrl.searchParams;
     const shopId = Number(qp.get("shopId"));
-    const customerExternalId = String(qp.get("customerExternalId") || "");
-    if (vin && Number.isFinite(shopId) && customerExternalId) {
-      return { vin, shopId, customerExternalId };
+    const customerId = String(qp.get("customerId") || "");
+    if (vin && Number.isFinite(shopId) && customerId) {
+      return { vin, shopId, customerId };
     }
-    return { error: "For GET testing, pass ?shopId=###&customerExternalId=XXXX" };
+    return { error: "For GET testing, pass ?shopId=###&customerId=XXXX" };
   }
 
   return { error: "Method not allowed." };
@@ -59,7 +59,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
 
-    const { vin, shopId, customerExternalId } = parsed;
+    const { vin, shopId, customerId } = parsed;
     const db = await getDb();
     const now = new Date();
 
@@ -74,7 +74,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       type: "vehicle-refresh",
       shopId,
       vin,
-      customerExternalId,
+      customerId,
       status: "running",
       startedAt: now,
       updatedAt: now,
@@ -92,7 +92,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
           type: "vehicle-refresh-error",
           shopId,
           vin,
-          customerExternalId,
+          customerId,
           stage: "dvi",
           error: dviSummary.error,
           at: new Date(),
@@ -103,14 +103,14 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
         type: "vehicle-refresh-note",
         shopId,
         vin,
-        customerExternalId,
+        customerId,
         note: "No RO# found for VIN; skipped DVI.",
         at: new Date(),
       });
     }
 
     await db.collection("jobs").updateMany(
-      { type: "vehicle-refresh", shopId, vin, customerExternalId, status: "running" },
+      { type: "vehicle-refresh", shopId, vin, customerId, status: "running" },
       { $set: { status: "done", updatedAt: new Date() } }
     );
 
@@ -119,7 +119,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
       const { origin } = new URL(req.url);
       const dest =
         `${origin}/dashboard/customers/` +
-        `${encodeURIComponent(customerExternalId)}/vehicles/${encodeURIComponent(vin)}?refreshed=1`;
+        `${encodeURIComponent(customerId)}/vehicles/${encodeURIComponent(vin)}?refreshed=1`;
 
       return NextResponse.redirect(dest, { status: 303 });
     }

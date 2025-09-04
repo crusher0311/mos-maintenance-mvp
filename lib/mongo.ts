@@ -1,4 +1,4 @@
-﻿// lib/mongo.ts
+// lib/mongo.ts
 import { MongoClient, Db } from "mongodb";
 
 let clientPromise: Promise<MongoClient> | undefined;
@@ -35,3 +35,4 @@ export async function getDb(name: string = process.env.MONGODB_DB || "mos-mainte
   const client = await getMongoClient();
   return client.db(name);
 }
+

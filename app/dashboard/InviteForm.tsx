@@ -20,10 +20,10 @@ export default function InviteForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Invite failed");
       try { await navigator.clipboard.writeText(data.inviteUrl); } catch {}
-      setMsg(`✅ Invite created. Link copied:\n${data.inviteUrl}`);
+      setMsg(`âœ… Invite created. Link copied:\n${data.inviteUrl}`);
       setEmail("");
     } catch (err: any) {
-      setMsg("❌ " + (err?.message || String(err)));
+      setMsg("âŒ " + (err?.message || String(err)));
     } finally {
       setBusy(false);
     }
@@ -53,10 +53,11 @@ export default function InviteForm() {
           className="rounded bg-black text-white px-4 py-2 disabled:opacity-50"
           disabled={busy || !email}
         >
-          {busy ? "Creating…" : "Create Invite"}
+          {busy ? "Creatingâ€¦" : "Create Invite"}
         </button>
       </form>
       {msg && <pre className="text-xs whitespace-pre-wrap">{msg}</pre>}
     </section>
   );
 }
+

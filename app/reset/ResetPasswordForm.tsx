@@ -38,10 +38,10 @@ export default function ResetPasswordPage() {
         throw new Error(data?.error || `HTTP ${res.status}`);
       }
 
-      setMsg("✅ Password reset successful. Redirecting to login…");
+      setMsg("âœ… Password reset successful. Redirecting to loginâ€¦");
       setTimeout(() => router.replace("/login"), 1500);
     } catch (err: any) {
-      setMsg("❌ " + (err?.message || "Reset failed"));
+      setMsg("âŒ " + (err?.message || "Reset failed"));
     } finally {
       setBusy(false);
     }
@@ -81,7 +81,7 @@ export default function ResetPasswordPage() {
           disabled={busy}
           className="rounded bg-black text-white px-4 py-2 disabled:opacity-50"
         >
-          {busy ? "Resetting…" : "Reset Password"}
+          {busy ? "Resettingâ€¦" : "Reset Password"}
         </button>
       </form>
 
@@ -89,3 +89,4 @@ export default function ResetPasswordPage() {
     </main>
   );
 }
+

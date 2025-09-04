@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
     `https://${req.headers.get("host") || "localhost:3000"}`;
   const setupUrl = `${base}/setup?shopId=${user.shopId}&token=${token}`;
 
-  // Optional email (no-op if you don’t have SMTP configured)
+  // Optional email (no-op if you donâ€™t have SMTP configured)
   try {
     const msg = makeInviteEmail({
       to: emailInput,
@@ -73,3 +73,4 @@ async function safeJson(req: NextRequest) {
     return null;
   }
 }
+

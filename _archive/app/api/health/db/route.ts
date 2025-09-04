@@ -10,3 +10,4 @@ export async function GET() {
     return Response.json({ ok: false, error: e?.message }, { status: 500 });
   }
 }
+

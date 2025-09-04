@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { getDb } from "@/lib/mongo";
 import { getNextShopId } from "@/lib/ids";
@@ -61,3 +61,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

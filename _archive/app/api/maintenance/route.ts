@@ -15,7 +15,7 @@ type Interval = { type: "At" | "Every"; value: number | null; units: "miles" | "
 type Service = { name?: string; category?: string; notes?: string; intervals: Interval[] };
 
 function computeStatus(svc: Service, currentMileage = 0) {
-  // MVP: if any mileage interval's first due point is <= current mileage → DUE
+  // MVP: if any mileage interval's first due point is <= current mileage â†’ DUE
   const miles = (svc.intervals || []).filter(i => i.units === "miles" && i.value != null);
   for (const iv of miles) {
     const first = iv.initial ?? iv.value!;
@@ -27,7 +27,7 @@ function computeStatus(svc: Service, currentMileage = 0) {
 export async function GET(req: Request) {
   const url = new URL(req.url);
 
-  // For now we accept explicit Y/M/M in the query (we’ll swap to VIN decode next)
+  // For now we accept explicit Y/M/M in the query (weâ€™ll swap to VIN decode next)
   const year  = url.searchParams.get("year");
   const make  = url.searchParams.get("make");
   const model = url.searchParams.get("model");
@@ -50,3 +50,4 @@ export async function GET(req: Request) {
 
   return new Response(JSON.stringify({ key, count: enriched.length, services: enriched }), { status: 200 });
 }
+

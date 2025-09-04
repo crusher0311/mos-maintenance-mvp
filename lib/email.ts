@@ -73,3 +73,4 @@ export function makeInviteEmail(inviteUrl: string, shopId: number, role: string)
   const text = `Accept your invite: ${inviteUrl}`;
   return { subject, html, text };
 }
+

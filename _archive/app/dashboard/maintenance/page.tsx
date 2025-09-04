@@ -68,7 +68,7 @@ export default async function Page() {
           <tbody>
             {docs.map((r) => {
               const veh = r.result || {};
-              const vehicle = [veh?.year, veh?.make, veh?.model].filter(Boolean).join(" ") || "—";
+              const vehicle = [veh?.year, veh?.make, veh?.model].filter(Boolean).join(" ") || "â€”";
               const counts = r.counters || {};
               const dt =
                 typeof r.updatedAt === "number"
@@ -91,7 +91,7 @@ export default async function Page() {
                 <tr key={`${r.vin}-${r.shopId || "null"}`} className="border-t">
                   <td className="px-3 py-2 font-mono">{r.vin}</td>
                   <td className="px-3 py-2">{vehicle}</td>
-                  <td className="px-3 py-2">{r.shopId || "—"}</td>
+                  <td className="px-3 py-2">{r.shopId || "â€”"}</td>
                   <td className="px-3 py-2">
                     {["overdue", "due", "coming_soon", "not_yet"].map((k) => badge(k))}
                   </td>
@@ -126,3 +126,4 @@ export default async function Page() {
     </div>
   );
 }
+

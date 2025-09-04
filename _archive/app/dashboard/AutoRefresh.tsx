@@ -10,3 +10,4 @@ export default function AutoRefresh({ intervalMs = 10000 }: { intervalMs?: numbe
   }, [router, intervalMs]);
   return null;
 }
+

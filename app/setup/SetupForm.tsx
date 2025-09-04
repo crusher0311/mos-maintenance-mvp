@@ -32,10 +32,10 @@ export default function SetupForm() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Setup failed");
-      setMsg("✅ Account created and signed in.");
+      setMsg("âœ… Account created and signed in.");
       // window.location.href = data.redirect || "/dashboard";
     } catch (err: any) {
-      setMsg("❌ " + (err?.message || String(err)));
+      setMsg("âŒ " + (err?.message || String(err)));
     } finally {
       setBusy(false);
     }
@@ -79,3 +79,4 @@ export default function SetupForm() {
     </form>
   );
 }
+

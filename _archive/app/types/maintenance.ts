@@ -27,7 +27,7 @@ export type NormalizedTask = {
 
 export type PlannedItem = NormalizedTask & {
   status:
-    | "QUESTIONABLE_OVERDUE" // “?Overdue” — past due but no history at all
+    | "QUESTIONABLE_OVERDUE" // â€œ?Overdueâ€ â€” past due but no history at all
     | "OVERDUE"
     | "DUE_NOW"
     | "COMING_SOON"
@@ -41,7 +41,8 @@ export type PlannedItem = NormalizedTask & {
   hasHistory: boolean;         // did we see any matching events?
 
   // --- UI-friendly labels (new) ---
-  statusLabel: string;         // “Overdue”, “Due now”, “Coming soon”, etc.
-  missedSinceLastLabel: string;// “Missed 2 since 132,000 mi” or "" if none
-  nextDueLabel: string;        // “Due at 150,000 mi” or "" if unknown
+  statusLabel: string;         // â€œOverdueâ€, â€œDue nowâ€, â€œComing soonâ€, etc.
+  missedSinceLastLabel: string;// â€œMissed 2 since 132,000 miâ€ or "" if none
+  nextDueLabel: string;        // â€œDue at 150,000 miâ€ or "" if unknown
 };
+

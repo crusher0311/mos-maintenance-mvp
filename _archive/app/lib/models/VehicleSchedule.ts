@@ -24,3 +24,4 @@ export type VehicleScheduleDoc = {
 
 export const VehicleSchedule =
   models.VehicleSchedule || model<VehicleScheduleDoc>("VehicleSchedule", VehicleScheduleSchema);
+

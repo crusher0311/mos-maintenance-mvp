@@ -81,7 +81,7 @@ export default async function DashboardPage() {
               {!vehicles.length && (
                 <tr>
                   <td colSpan={6} className="p-4 text-center text-gray-500">
-                    No vehicles yet—send a webhook.
+                    No vehicles yetâ€”send a webhook.
                   </td>
                 </tr>
               )}
@@ -92,3 +92,4 @@ export default async function DashboardPage() {
     </main>
   );
 }
+

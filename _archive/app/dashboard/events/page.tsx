@@ -51,11 +51,11 @@ export default async function EventsPage() {
             {events.map((e: any, i: number) => (
               <tr key={`${e.shopId}-${e.receivedAt}-${i}`} className="border-t">
                 <td className="px-3 py-2">{new Date(e.receivedAt ?? 0).toLocaleString()}</td>
-                <td className="px-3 py-2">{e.shopId ?? "—"}</td>
-                <td className="px-3 py-2">{e.source ?? "—"}</td>
-                <td className="px-3 py-2">{e.eventType ?? "—"}</td>
-                <td className="px-3 py-2">{e?.payload?.id ?? "—"}</td>
-                <td className="px-3 py-2">{e.status ?? "—"}</td>
+                <td className="px-3 py-2">{e.shopId ?? "â€”"}</td>
+                <td className="px-3 py-2">{e.source ?? "â€”"}</td>
+                <td className="px-3 py-2">{e.eventType ?? "â€”"}</td>
+                <td className="px-3 py-2">{e?.payload?.id ?? "â€”"}</td>
+                <td className="px-3 py-2">{e.status ?? "â€”"}</td>
               </tr>
             ))}
             {events.length === 0 && (
@@ -74,3 +74,4 @@ export default async function EventsPage() {
     </div>
   );
 }
+

@@ -1,80 +1,117 @@
-"use client";
+// app/dashboard/events/page.tsx
+import { requireSession } from "@/lib/auth";
+import { getDb } from "@/lib/mongo";
 
-import { useEffect, useState } from "react";
+export const dynamic = "force-dynamic";
+
+type EventDoc = {
+  _id: any;
+  receivedAt?: Date;
+  provider?: string;
+  payload?: any;
+  raw?: string | null;
+};
 
 type EventRow = {
   id: string;
   ts: string | Date;
   provider: string;
-  event: string;
+  event: string;   // always a string for rendering
   preview: string;
   payload: any;
 };
 
-export default function EventsPage() {
-  const [items, setItems] = useState<EventRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
-  const [limit, setLimit] = useState(50);
-  const [auto, setAuto] = useState(true);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+function pick<T = any>(obj: any, keys: string[]): T | undefined {
+  for (const k of keys) {
+    const path = k.split(".");
+    let cur = obj;
+    for (const part of path) {
+      if (cur && typeof cur === "object" && part in cur) cur = cur[part];
+      else {
+        cur = undefined;
+        break;
+      }
+    }
+    if (cur !== undefined && cur !== null && cur !== "") return cur as T;
+  }
+  return undefined;
+}
 
-  async function load() {
-    setLoading(true);
-    setError("");
+function toLabel(val: any): string {
+  if (val == null) return "unknown";
+  if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+    return String(val);
+  }
+  // common shapes: { type, id, timestamp } etc.
+  if (typeof val === "object") {
+    const type = (val as any).type ?? (val as any).name ?? (val as any).event;
+    if (type) return String(type);
     try {
-      const r = await fetch(`/api/events/list?limit=${limit}`, { cache: "no-store" });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
-      setItems(data.events || []);
-    } catch (e: any) {
-      setError(e?.message || "Failed to load events");
-    } finally {
-      setLoading(false);
+      return JSON.stringify(val);
+    } catch {
+      return "[object]";
     }
   }
+  return String(val);
+}
 
-  useEffect(() => {
-    load();
-    if (!auto) return;
-    const t = setInterval(load, 10000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, auto]);
+function buildPreview(payload: any): string {
+  if (!payload) return "(no payload)";
+  const first = pick<string>(payload, ["customer.first", "customer.firstname", "first", "first_name"]);
+  const last  = pick<string>(payload, ["customer.last", "customer.lastname", "last", "last_name"]);
+  const name  = [first, last].filter(Boolean).join(" ").trim();
+
+  const vin   = pick<string>(payload, ["vehicle.vin", "vin"]);
+  const ro    = pick<string | number>(payload, ["ro_number", "roNumber", "ro", "roNo"]);
+  const miles = pick<number | string>(payload, ["mileage", "miles", "odometer", "odo"]);
+
+  const bits: string[] = [];
+  if (name) bits.push(name);
+  if (vin) bits.push(`VIN ${vin}`);
+  if (ro !== undefined) bits.push(`RO ${ro}`);
+  if (miles !== undefined) bits.push(`${miles} mi`);
+  return bits.length ? bits.join(" · ") : "(no quick summary)";
+}
+
+export default async function EventsPage() {
+  const sess = await requireSession();
+
+  const db = await getDb();
+  const docs = (await db
+    .collection("events")
+    .find({ provider: "autoflow", shopId: sess.shopId })
+    .sort({ receivedAt: -1 })
+    .limit(50)
+    .toArray()) as EventDoc[];
+
+  const items: EventRow[] = docs.map((d) => {
+    let payload = d.payload;
+    if (!payload && d.raw) {
+      try { payload = JSON.parse(d.raw); } catch { payload = null; }
+    }
+    const eventRaw =
+      pick<any>(payload, ["event", "type", "name"]) ?? "unknown";
+    return {
+      id: String(d._id),
+      ts: d.receivedAt ?? new Date(),
+      provider: d.provider ?? "autoflow",
+      event: toLabel(eventRaw),              // <-- ensure string
+      preview: buildPreview(payload),
+      payload,
+    };
+  });
 
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Webhook Console</h1>
-        <div className="flex items-center gap-3">
-          <label className="text-sm flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={auto}
-              onChange={(e) => setAuto(e.target.checked)}
-            />
-            Auto-refresh
-          </label>
-          <select
-            className="border rounded p-1 text-sm"
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-          >
-            {[20, 50, 100].map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-          <button
-            onClick={load}
-            className="rounded bg-black text-white px-3 py-1.5 text-sm"
-          >
-            Refresh
-          </button>
-        </div>
+        <a
+          href="/api/events/list?limit=50"
+          className="rounded bg-black text-white px-3 py-1.5 text-sm"
+        >
+          View as JSON
+        </a>
       </div>
-
-      {loading && <div className="text-sm text-gray-600">Loading…</div>}
-      {error && <div className="text-sm text-red-600">Error: {error}</div>}
 
       <div className="rounded-2xl border divide-y">
         <div className="grid grid-cols-4 gap-2 text-xs font-semibold p-3 bg-gray-50">
@@ -85,51 +122,33 @@ export default function EventsPage() {
         </div>
 
         {items.map((e) => {
-          const id = e.id;
-          const isOpen = !!expanded[id];
-          const ts = new Date(e.ts);
-          const when = ts.toLocaleString();
-
+          const when = new Date(e.ts).toLocaleString();
           return (
-            <div key={id} className="p-3">
+            <div key={e.id} className="p-3">
               <div className="grid grid-cols-4 gap-2 text-sm">
                 <div className="truncate">{when}</div>
                 <div className="truncate">{e.provider}</div>
-                <div className="truncate">{e.event}</div>
+                <div className="truncate">{e.event}</div> {/* now always string */}
                 <div className="truncate">{e.preview}</div>
               </div>
 
-              <div className="mt-2 flex gap-3">
-                <button
-                  onClick={() =>
-                    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
-                  }
-                  className="text-xs underline"
-                >
-                  {isOpen ? "Hide JSON" : "Show JSON"}
-                </button>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(JSON.stringify(e.payload, null, 2));
-                  }}
-                  className="text-xs underline"
-                >
-                  Copy JSON
-                </button>
-              </div>
-
-              {isOpen && (
+              <details className="mt-2">
+                <summary className="text-xs underline cursor-pointer">Show JSON</summary>
                 <pre className="mt-2 text-xs bg-gray-50 p-3 rounded overflow-auto max-h-64">
 {JSON.stringify(e.payload, null, 2)}
                 </pre>
-              )}
+              </details>
             </div>
           );
         })}
+
+        {items.length === 0 && (
+          <div className="p-6 text-sm text-neutral-600">No events yet.</div>
+        )}
       </div>
 
       <p className="text-xs text-gray-500">
-        Shows the most recent events for your shop. Use this to verify webhook delivery from AutoFlow.
+        Shows the most recent AutoFlow events for your shop.
       </p>
     </main>
   );

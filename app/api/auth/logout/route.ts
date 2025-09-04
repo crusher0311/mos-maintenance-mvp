@@ -1,29 +1,27 @@
-// app/api/auth/logout/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getDb } from "@/lib/mongo";
+
+export const runtime = "nodejs";
 
 export async function POST() {
-  try {
-    const token = cookies().get("session_token")?.value;
+  const store = await cookies(); // ⬅️ await
 
-    if (token) {
-      const db = await getDb();
-      await db.collection("sessions").deleteOne({ token });
-    }
+  // read if you need it for logging
+  const token = store.get("session_token")?.value ?? store.get("sid")?.value;
 
-    // Clear cookie by setting it expired
-    cookies().set("session_token", "", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 0,
-    });
+  // clear either cookie name you might be using
+  store.set({
+    name: "session_token",
+    value: "",
+    path: "/",
+    maxAge: 0,
+  });
+  store.set({
+    name: "sid",
+    value: "",
+    path: "/",
+    maxAge: 0,
+  });
 
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("Logout error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+  return NextResponse.json({ ok: true });
 }

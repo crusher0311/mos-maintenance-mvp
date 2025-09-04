@@ -95,7 +95,7 @@ Rules:
     clearTimeout(timeout);
 
     if (!res.ok) {
-      // Swallow model errors—API should keep working without AI
+      // Swallow model errorsâ€”API should keep working without AI
       return null;
     }
 
@@ -163,3 +163,4 @@ function safeJsonExtract(text: string): AiAdvice | null {
     return null;
   }
 }
+

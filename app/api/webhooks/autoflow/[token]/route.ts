@@ -1,8 +1,9 @@
-﻿// app/api/webhooks/autoflow/[token]/route.ts
+// app/api/webhooks/autoflow/[token]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
 import { upsertCustomerFromAutoflow } from "@/lib/models/customers";
+import { fetchDviByInvoice, upsertDviSnapshot } from "@/lib/integrations/autoflow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ async function findShopByToken(token: string) {
     .findOne({ webhookToken: token }, { projection: { shopId: 1, name: 1 } });
 }
 
-// ---- GET: simple token validity check -----------------------------------
+// ---- GET: token validity ------------------------------------------------
 
 export async function GET(req: NextRequest, ctx: { params: { token: string } }) {
   const token = ctx.params?.token || "";
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest, ctx: { params: { token: string } }) 
   return NextResponse.json({ ok: true, shopId: shop.shopId });
 }
 
-// ---- POST: accept webhook payload --------------------------------------
+// ---- POST: accept webhook -----------------------------------------------
 
 export async function POST(req: NextRequest, ctx: { params: { token: string } }) {
   const token = ctx.params?.token || "";
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
     // keep payload as null; raw is still saved
   }
 
-  // OPTIONAL signature verification (enable later if you want; no UI needed)
+  // OPTIONAL signature verification (enable by setting AUTOFLOW_SIGNING_SECRET)
   const secret = process.env.AUTOFLOW_SIGNING_SECRET || "";
   if (secret) {
     const sig =
@@ -88,9 +89,15 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
     receivedAt: new Date(),
   });
 
-  // Best-effort normalization: upsert customer for common cases.
+  // Best-effort normalization: upsert customer from common shapes.
   try {
-    const eventName = payload?.event ?? payload?.type ?? payload?.name ?? "";
+    const eventName =
+      payload?.event?.type ||
+      payload?.event ||
+      payload?.type ||
+      payload?.name ||
+      "";
+
     const looksCustomerish =
       !!payload?.customer ||
       !!payload?.data?.customer ||
@@ -104,8 +111,27 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
     ) {
       await upsertCustomerFromAutoflow(shop.shopId, payload);
     }
-  } catch {
+
+    // Auto-fetch DVI on completion/signoff updates
+    // Examples: "dvi_signoff_update", "dvi.completed", etc.
+    const dviEvent =
+      /dvi/i.test(String(eventName)) &&
+      /(signoff|complete|completed|update)/i.test(String(eventName));
+
+    // Extract RO/Invoice similar to your sample payload
+    const roNumber =
+      payload?.ticket?.invoice ??
+      payload?.ticket?.id ??
+      payload?.event?.invoice ??
+      null;
+
+    if (dviEvent && roNumber != null) {
+      const dvi = await fetchDviByInvoice(shop.shopId, String(roNumber));
+      await upsertDviSnapshot(shop.shopId, String(roNumber), dvi);
+    }
+  } catch (e) {
     // Swallow normalization errors; raw event is still stored
+    console.error("Webhook normalization error:", e);
   }
 
   return NextResponse.json({ ok: true, shopId: shop.shopId });

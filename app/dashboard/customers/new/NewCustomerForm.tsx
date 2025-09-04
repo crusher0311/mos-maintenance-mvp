@@ -40,7 +40,7 @@ export default function NewCustomerForm() {
 
       router.replace("/dashboard/customers");
     } catch (err: any) {
-      setMsg("❌ " + (err?.message || "Failed to create customer"));
+      setMsg("âŒ " + (err?.message || "Failed to create customer"));
     } finally {
       setBusy(false);
     }
@@ -100,7 +100,7 @@ export default function NewCustomerForm() {
           disabled={busy}
           className="rounded bg-black text-white px-4 py-2 disabled:opacity-50"
         >
-          {busy ? "Saving…" : "Save"}
+          {busy ? "Savingâ€¦" : "Save"}
         </button>
         <Link
           href="/dashboard/customers"
@@ -118,3 +118,4 @@ export default function NewCustomerForm() {
     </form>
   );
 }
+

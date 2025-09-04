@@ -1,4 +1,4 @@
-﻿// app/api/shops/[shopId]/credentials/route.ts
+// app/api/shops/[shopId]/credentials/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 

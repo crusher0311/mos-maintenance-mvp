@@ -12,3 +12,4 @@ export function loadVinFixture(vin: string): any | null {
     return null;
   }
 }
+

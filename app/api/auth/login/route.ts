@@ -6,6 +6,8 @@ import bcrypt from "bcryptjs";
 import { getDb } from "@/lib/mongo";
 import { sessionCookieOptions } from "@/lib/auth";
 
+export const runtime = "nodejs";
+
 function looksLikeBcrypt(s: unknown) {
   return typeof s === "string" && /^\$2[aby]\$/.test(s);
 }
@@ -15,7 +17,10 @@ export async function POST(req: Request) {
     const { email, password, shopId } = await req.json();
 
     if (!email || !password) {
-      return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Email and password are required" },
+        { status: 400 }
+      );
     }
 
     const db = await getDb();
@@ -43,9 +48,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const user = query.shopId
-      ? candidates[0]
-      : candidates[0]; // unique by email or we already error’d above
+    const user = candidates[0];
 
     // Password checks with graceful migration
     const dbHash = user.passwordHash;
@@ -83,7 +86,14 @@ export async function POST(req: Request) {
       expiresAt,
     });
 
-    cookies().set("session_token", token, sessionCookieOptions(60 * 60 * 24 * 30));
+    // ✅ Next.js 15: await cookies() before using it
+    const store = await cookies();
+    store.set(
+      "session_token",
+      token,
+      sessionCookieOptions(60 * 60 * 24 * 30) // maxAge in seconds
+    );
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Login error:", err);

@@ -1,4 +1,4 @@
-﻿import { MongoClient, Db } from "mongodb";
+import { MongoClient, Db } from "mongodb";
 
 const URI =
   process.env.MONGODB_URI ??
@@ -30,3 +30,4 @@ export async function getDb(name: string = DEFAULT_DB): Promise<Db> {
   const client = await connect();
   return client.db(name);
 }
+

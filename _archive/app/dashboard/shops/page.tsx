@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 async function fetchShops() {
   const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/shops`, { cache: "no-store" });
-  // Fallback if NEXT_PUBLIC_BASE_URL not set – Next.js will upgrade to absolute automatically on server
+  // Fallback if NEXT_PUBLIC_BASE_URL not set â€“ Next.js will upgrade to absolute automatically on server
   if (!res.ok) return { shops: [] };
   return res.json();
 }
@@ -75,3 +75,4 @@ export default async function ShopsPage() {
     </div>
   );
 }
+

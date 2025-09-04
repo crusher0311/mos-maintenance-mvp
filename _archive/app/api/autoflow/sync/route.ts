@@ -57,7 +57,7 @@ const monthsBetween = (fromISO?: string | Date): number | undefined => {
 };
 
 function normalizeAutoflowVehicle(x: RawVehicle): NormalizedVehicle | null {
-  // Try lots of common field names we’ve seen
+  // Try lots of common field names weâ€™ve seen
   const vin =
     (x.vin || x.VIN || x.vehicleVin || x.VehicleVIN || "").toString().trim().toUpperCase();
   if (!vin || vin.length !== 17) return null;
@@ -125,7 +125,7 @@ async function getAutoflowVehicles(url: URL): Promise<NormalizedVehicle[]> {
     // will be handled by the route POST/GET wrappers below
   } catch (_) {}
 
-  // 3) Pull from Autoflow (generic proxy – adjust path if needed)
+  // 3) Pull from Autoflow (generic proxy â€“ adjust path if needed)
   if (!AUTOFLOW_BASE_URL || !AUTOFLOW_API_KEY) {
     return [];
   }
@@ -306,3 +306,4 @@ export async function GET(req: NextRequest) {
   // Allow quick GET testing (demo/autoflow)
   return POST(req);
 }
+

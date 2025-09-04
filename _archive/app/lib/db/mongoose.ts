@@ -27,3 +27,4 @@ export async function connectToMongo() {
   cached.conn = await cached.promise;
   return cached.conn;
 }
+

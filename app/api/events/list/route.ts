@@ -39,3 +39,4 @@ function clampInt(val: string | null, def: number, min: number, max: number) {
   if (!Number.isFinite(n)) return def;
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
+

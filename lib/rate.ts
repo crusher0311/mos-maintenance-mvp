@@ -62,3 +62,4 @@ export function clientIp(req: Request): string {
   const xff = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim();
   return xff || "unknown";
 }
+
