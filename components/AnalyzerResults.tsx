@@ -1,3 +1,4 @@
+﻿'use client';
 // components/AnalyzerResults.tsx
 "use client";
 
@@ -42,12 +43,12 @@ export default function AnalyzerResults({ analysis }: { analysis: Analysis }) {
           <CardTitle className="text-lg">
             {analysis.vehicle.year ? `${analysis.vehicle.year} ` : ""}
             {analysis.vehicle.make} {analysis.vehicle.model}
-            {analysis.vehicle.trim ? ` ${analysis.vehicle.trim}` : ""} ·{" "}
+            {analysis.vehicle.trim ? ` ${analysis.vehicle.trim}` : ""} Â·{" "}
             <span className="text-muted-foreground">{analysis.vehicle.vin}</span>
           </CardTitle>
           <CardDescription>
             {recs.length} recommendation{recs.length === 1 ? "" : "s"}
-            {analysis.redFlags?.length ? ` · ${analysis.redFlags.length} data gap(s)` : ""}
+            {analysis.redFlags?.length ? ` Â· ${analysis.redFlags.length} data gap(s)` : ""}
           </CardDescription>
         </CardHeader>
       </Card>
@@ -88,3 +89,4 @@ export default function AnalyzerResults({ analysis }: { analysis: Analysis }) {
                 <div className="flex flex-wrap gap-2">
                   {r.sources.map((s, idx) => (
                     <Badge key={idx} variant="outline" className="t
+
