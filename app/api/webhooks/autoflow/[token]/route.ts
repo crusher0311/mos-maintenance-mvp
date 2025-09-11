@@ -2,8 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
-import { upsertCustomerFromAutoflow } from "@/lib/models/customers";
 import { fetchDviByInvoice, upsertDviSnapshot } from "@/lib/integrations/autoflow";
+import { upsertCustomerFromAutoflowEvent } from "@/lib/models/customers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +29,16 @@ async function findShopByToken(token: string) {
   return db
     .collection("shops")
     .findOne({ webhookToken: token }, { projection: { shopId: 1, name: 1 } });
+}
+
+function getEventName(payload: any): string {
+  return (
+    payload?.event?.type ||
+    payload?.event ||
+    payload?.type ||
+    payload?.name ||
+    ""
+  );
 }
 
 // ---- GET: token validity ------------------------------------------------
@@ -82,43 +92,63 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
   // Persist raw event for audit / console
   await db.collection("events").insertOne({
     provider: "autoflow",
-    shopId: shop.shopId,
+    shopId: shop.shopId, // keep original type; dashboards handle both string/number
     token,
     payload,
     raw,
     receivedAt: new Date(),
   });
 
-  // Best-effort normalization: upsert customer from common shapes.
+  // ---- Normalize into first-class docs so dashboards light up ---------
   try {
-    const eventName =
-      payload?.event?.type ||
-      payload?.event ||
-      payload?.type ||
-      payload?.name ||
-      "";
+    const eventName = getEventName(payload);
 
-    const looksCustomerish =
-      !!payload?.customer ||
-      !!payload?.data?.customer ||
-      !!payload?.customerId ||
-      !!payload?.data?.customerId ||
-      !!payload?.data?.customer_id;
+    // 1) Make sure a visible/open customer exists or is refreshed
+    await upsertCustomerFromAutoflowEvent(payload, shop.shopId);
 
-    if (
-      looksCustomerish ||
-      /customer\.(created|updated|upsert)/i.test(String(eventName))
-    ) {
-      await upsertCustomerFromAutoflow(shop.shopId, payload);
+    // 2) (Optional) Auto-close on specific events
+    //    Edit this set to match the events that should close a customer.
+    const closeTypes = new Set<string>([
+      "dvi_signoff",
+      "dvi.signoff",
+      "dvi_completed",
+      "dvi.completed",
+      "work_completed",
+      "ticket_closed",
+      "ticket.closed",
+    ]);
+    if (closeTypes.has(eventName?.toLowerCase())) {
+      const now = new Date();
+
+      // Try to resolve a VIN or external customer selector from the payload
+      const vin =
+        (payload?.vin ??
+          payload?.vehicle?.vin ??
+          payload?.data?.vehicle?.vin ??
+          payload?.ticket?.vehicle?.vin ??
+          "")
+          .toString()
+          .toUpperCase() || null;
+
+      const shopIdStr = String(shop.shopId);
+
+      await db.collection("customers").updateOne(
+        {
+          $and: [
+            { $or: [{ shopId: shopIdStr }, { shopId: Number(shopIdStr) }] },
+            vin ? { "vehicle.vin": vin } : {},
+          ],
+        },
+        { $set: { status: "closed", closedAt: now, updatedAt: now } }
+      );
     }
 
-    // Auto-fetch DVI on completion/signoff updates
-    // Examples: "dvi_signoff_update", "dvi.completed", etc.
+    // 3) Auto-fetch DVI on completion/signoff updates
     const dviEvent =
       /dvi/i.test(String(eventName)) &&
       /(signoff|complete|completed|update)/i.test(String(eventName));
 
-    // Extract RO/Invoice similar to your sample payload
+    // Extract RO/Invoice similar to prior samples
     const roNumber =
       payload?.ticket?.invoice ??
       payload?.ticket?.id ??
@@ -130,7 +160,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
       await upsertDviSnapshot(shop.shopId, String(roNumber), dvi);
     }
   } catch (e) {
-    // Swallow normalization errors; raw event is still stored
+    // Swallow normalization errors; raw event is still stored for replay
     console.error("Webhook normalization error:", e);
   }
 
