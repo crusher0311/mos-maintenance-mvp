@@ -1,0 +1,20 @@
+# build artifacts  never upload
+.next
+.vercel/output
+dist
+build
+out
+coverage
+*.log
+**/*.log
+*.zip
+*.tgz
+tmp
+temp
+# archives / large local data
+_archive
+_archive/**
+**/_archive/**
+
+# deps (usually ignored by Vercel anyway, but safe to include)
+node_modules
