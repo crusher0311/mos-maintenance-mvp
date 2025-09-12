@@ -1,10 +1,13 @@
+Here’s the full updated file (drop-in replace). I only changed the AF lookup to prefer the most recent **non-closed/non-appointment** event and fall back to the latest event if needed.
+
+```tsx
 // app/dashboard/page.tsx
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "@/lib/mongo";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0; // ⬅️ add this
+export const revalidate = 0;
 
 const VEHICLE_HREF = (vin: string) => `/dashboard/vehicles/${encodeURIComponent(vin)}`;
 const PLAN_HREF = (vin: string) => `/dashboard/vehicles/${encodeURIComponent(vin)}/plan`;
@@ -52,7 +55,9 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   // Only non-closed customers
-  const statusNotClosed = { $or: [{ status: { $exists: false } }, { status: null }, { status: { $ne: "closed" } }] };
+  const statusNotClosed = {
+    $or: [{ status: { $exists: false } }, { status: null }, { status: { $ne: "closed" } }],
+  };
 
   const rows = await db.collection("customers").aggregate<Row>([
     { $match: { $and: [{ $or: [{ shopId: String(user.shopId) }, { shopId: Number(user.shopId) }] }, statusNotClosed] } },
@@ -77,7 +82,6 @@ export default async function DashboardPage() {
           },
           { $sort: { vTime: -1 } },
           { $limit: 1 },
-          // include odometer-like fields if present
           { $project: { year: 1, make: 1, model: 1, vin: 1, odometer: 1, lastMiles: 1 } },
         ],
         as: "vehicle",
@@ -244,7 +248,7 @@ export default async function DashboardPage() {
       },
     },
 
-    // ✅ Require a REAL name AND a VIN (hide rows with no vehicle info)
+    // Require name + VIN
     {
       $match: {
         displayName: { $type: "string", $ne: "" },
@@ -252,7 +256,9 @@ export default async function DashboardPage() {
       },
     },
 
-    // Latest AF/ManualClosed event for VIN: include both status and mileage
+    // Latest AF event per VIN with fallback:
+    // - Prefer the most recent NON-closed/non-appointment event
+    // - Fall back to the most recent event of any status
     {
       $lookup: {
         from: "events",
@@ -292,39 +298,59 @@ export default async function DashboardPage() {
                   { $dateFromString: { dateString: { $toString: "$createdAt" }, onError: null, onNull: null } },
                 ],
               },
+              statusRaw: {
+                $ifNull: [
+                  "$payload.ticket.status",
+                  { $ifNull: ["$status", { $ifNull: ["$payload.status", "$type"] }] },
+                ],
+              },
             },
           },
           { $sort: { createdAtDate: -1 } },
-          { $limit: 1 },
+          {
+            $facet: {
+              open: [
+                { $match: { statusRaw: { $not: /close|appoint/i } } },
+                { $limit: 1 },
+              ],
+              any: [{ $limit: 1 }],
+            },
+          },
+          {
+            $project: {
+              chosen: {
+                $cond: [
+                  { $gt: [{ $size: "$open" }, 0] },
+                  { $arrayElemAt: ["$open", 0] },
+                  { $arrayElemAt: ["$any", 0] },
+                ],
+              },
+            },
+          },
           {
             $project: {
               _id: 0,
-              createdAt: "$createdAtDate",
+              createdAt: "$chosen.createdAtDate",
               status: {
                 $cond: [
-                  { $and: [{ $eq: ["$provider", "ui"] }, { $eq: ["$type", "manual_closed"] }] },
+                  { $and: [{ $eq: ["$chosen.provider", "ui"] }, { $eq: ["$chosen.type", "manual_closed"] }] },
                   "Closed",
-                  {
-                    $ifNull: [
-                      "$payload.ticket.status",
-                      { $ifNull: ["$status", { $ifNull: ["$payload.status", "$type"] }] },
-                    ],
-                  },
+                  "$chosen.statusRaw",
                 ],
               },
               miles: {
                 $ifNull: [
-                  "$payload.ticket.mileage",
+                  "$chosen.payload.ticket.mileage",
                   {
                     $ifNull: [
-                      "$payload.mileage",
+                      "$chosen.payload.mileage",
                       {
                         $ifNull: [
-                          "$payload.vehicle.mileage",
+                          "$chosen.payload.vehicle.mileage",
                           {
                             $ifNull: [
-                              "$payload.vehicle.miles",
-                              { $ifNull: ["$payload.vehicle.odometer", null] },
+                              "$chosen.payload.vehicle.miles",
+                              { $ifNull: ["$chosen.payload.vehicle.odometer", null] },
                             ],
                           },
                         ],
@@ -341,7 +367,7 @@ export default async function DashboardPage() {
     },
     { $addFields: { af: { $ifNull: [{ $arrayElemAt: ["$af", 0] }, null] } } },
 
-    // DVI presence for latest RO (either dvi_results or dvi collections)
+    // DVI presence for latest RO
     {
       $lookup: {
         from: "dvi_results",
@@ -368,7 +394,7 @@ export default async function DashboardPage() {
     },
     { $addFields: { dviDone: { $gt: [{ $size: { $concatArrays: ["$dviRes", "$dviAlt"] } }, 0] } } },
 
-    // Compose best available mileage: RO → AF → Vehicle (ignore 0/null)
+    // Best available mileage: RO → AF → Vehicle
     {
       $addFields: {
         displayMiles: {
@@ -448,8 +474,6 @@ export default async function DashboardPage() {
           <div>Shop ID: <code>{String(user.shopId ?? "—")}</code></div>
         </div>
       </header>
-
-      {/* Invite form temporarily hidden */}
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Recent Vehicles / Customers</h2>
@@ -595,3 +619,4 @@ export default async function DashboardPage() {
     </main>
   );
 }
+```
