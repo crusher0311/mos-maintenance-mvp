@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/lib/mongo";
 
 export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic";
+export const revalidate = 0; // ⬅️ add this
 
 const VEHICLE_HREF = (vin: string) => `/dashboard/vehicles/${encodeURIComponent(vin)}`;
 const PLAN_HREF = (vin: string) => `/dashboard/vehicles/${encodeURIComponent(vin)}/plan`;

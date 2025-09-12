@@ -59,8 +59,8 @@ type ClosedWord = typeof CLOSED_SET[number];
 /* ------------------------------------------------------------------ */
 
 function extractCustomer(payload: RawPayload) {
-  const a = payload?.data?.customer; // e.g., { event: 'customer.created', data: { customer: {...} } }
-  const b = payload?.customer;       // e.g., status_update / dvi_signoff_update shape
+  const a = payload?.data?.customer; // { event: 'customer.created', data: { customer: {...} } }
+  const b = payload?.customer;       // status_update / dvi_signoff_update shape
 
   let externalId: string | null = null;
   let first: string | null = null;
@@ -427,7 +427,7 @@ export async function getOpenCustomersForDashboard(shopIdInput: number | string,
         $and: [
           { $or: [{ shopId: shopIdNum }, { shopId: shopIdStr }] },
           { status: { $nin: CLOSED_SET as unknown as ClosedWord[] } },
-          { "vehicle.vin": { $exists: true, $ne: "" } },
+          { "vehicle.vin": { $nin: ["", null] } }, // ← stricter VIN filter
         ],
       },
       {
