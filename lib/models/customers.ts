@@ -50,16 +50,9 @@ function looksLikeCompany(s?: string | null): boolean {
   return wordCount >= 2;
 }
 
+/** values treated as non-displayable/closed by the dashboard helper */
 const CLOSED_SET = ["closed", "Close", "CLOSED", "Appointment"] as const;
 type ClosedWord = typeof CLOSED_SET[number];
-
-function normalizeStatus(s?: string | null): string | null {
-  if (!s) return null;
-  const t = String(s).trim();
-  if (!t) return null;
-  if (["close", "closed"].includes(t.toLowerCase())) return "closed";
-  return t; // keep original casing for non-closed statuses (e.g., Checkin, Servicing, Ready)
-}
 
 /* ------------------------------------------------------------------ */
 /* --------------------------- extractors --------------------------- */
@@ -140,6 +133,7 @@ function extractVehicleTicket(payload: RawPayload) {
 
 /**
  * Rich upsert used by data model (vehicles/repair_orders + last* fields on customer).
+ * Stores status exactly as received from AutoFlow.
  */
 export async function upsertCustomerFromAutoflow(shopId: number, payload: RawPayload) {
   const db = await getDb();
@@ -158,7 +152,7 @@ export async function upsertCustomerFromAutoflow(shopId: number, payload: RawPay
     return { ok: true as const, customerId: null, vehicleId: null, roNumber: roNumber ?? null, mileage: mileage ?? null };
   }
 
-  // Build base $set
+  // Build base $set (status/raw)
   const baseSet: any = {
     externalId: externalId ?? null,
     firstName: first ?? null,
@@ -172,9 +166,10 @@ export async function upsertCustomerFromAutoflow(shopId: number, payload: RawPay
   if (roNumber != null) baseSet.lastRo = String(roNumber);
   if (vin != null)      baseSet.lastVin = String(vin);
   if (mileage != null)  baseSet.lastMileage = mileage;
-  if (ticketStatus != null) baseSet.lastStatus = ticketStatus;
-  const normalized = normalizeStatus(ticketStatus);
-  if (normalized) baseSet.status = normalized;
+  if (ticketStatus != null) {
+    baseSet.lastStatus = ticketStatus;
+    baseSet.status = ticketStatus; // store exactly as sent
+  }
 
   // Choose selector (most specific first)
   const selectors: any[] = [];
@@ -242,7 +237,7 @@ export async function upsertCustomerFromAutoflow(shopId: number, payload: RawPay
           vehicleId: vehicleId ?? null,
           vin: vin ?? null,
           mileage: mileage ?? null,
-          status: ticketStatus ?? null,
+          status: ticketStatus ?? null, // store raw
           updatedAt: now,
           source: "autoflow",
         },
@@ -256,8 +251,9 @@ export async function upsertCustomerFromAutoflow(shopId: number, payload: RawPay
 
 /**
  * Lightweight upsert used by webhook to keep the “open customers” list fresh.
- * - Accepts numeric or string shopId and stores it consistently as a **string** field (query helper handles both).
- * - Updates lastStatus/status, lastTicketId, last VIN/mileage/vehicle meta when present (doesn't clobber with nulls).
+ * - Stores whatever status AutoFlow sent (no canonicalization)
+ * - Persists a compact vehicle block when present
+ * - Ensures openedAt on first sighting
  */
 export async function upsertCustomerFromAutoflowEvent(payload: any, shopIdRaw: string | number) {
   const db = await getDb();
@@ -295,7 +291,7 @@ export async function upsertCustomerFromAutoflowEvent(payload: any, shopIdRaw: s
     const joined = [firstName ?? "", lastName ?? ""].filter(Boolean).join(" ").trim();
     if (joined) derivedName = joined;
     else if (!firstName && looksLikeCompany(lastName)) derivedName = lastName;
-    else derivedName = null;
+    else derivedName = "(no name)";
   }
 
   const emailRaw =
@@ -319,32 +315,35 @@ export async function upsertCustomerFromAutoflowEvent(payload: any, shopIdRaw: s
   // Vehicle/RO/status
   const ticket = payload?.ticket ?? {};
   const vehicle = payload?.vehicle ?? {};
-  const lastTicketId =
+
+  const ro =
     (ticket?.invoice != null ? String(ticket.invoice) : null) ??
     (ticket?.id != null ? String(ticket.id) : null) ??
     null;
 
-  const lastStatus = ticket?.status ? String(ticket.status) : null;
-  const status = normalizeStatus(lastStatus);
+  const rawStatus = ticket?.status ? String(ticket.status) : null; // keep as-is
 
   const vin = vehicle?.vin ? String(vehicle.vin).toUpperCase() : null;
-  const mileage = normalizeNumber(vehicle?.odometer);
-  const vehicleMeta: Record<string, any> = {};
-  if (vehicle?.year != null) vehicleMeta.year = normalizeNumber(vehicle.year);
-  if (vehicle?.make != null) vehicleMeta.make = vehicle.make;
-  if (vehicle?.model != null) vehicleMeta.model = vehicle.model;
-  if (vehicle?.license != null) vehicleMeta.license = vehicle.license;
+  const vehDoc =
+    vin || vehicle?.year != null || vehicle?.make != null || vehicle?.model != null || vehicle?.license != null || vehicle?.odometer != null
+      ? {
+          vin: vin ?? undefined,
+          year: normalizeNumber(vehicle?.year) ?? undefined,
+          make: vehicle?.make ?? undefined,
+          model: vehicle?.model ?? undefined,
+          license: vehicle?.license ?? undefined,
+          odometer: normalizeNumber(vehicle?.odometer) ?? undefined,
+        }
+      : undefined;
 
-  // Build a specific selector (externalId -> email -> phone -> name -> "(no name)")
-  const selectorBase = { shopId: shopIdStr };
-  let selector: Record<string, any> = { ...selectorBase };
+  // Build selector (externalId -> email -> phone -> name)
+  const selector: Record<string, any> = { shopId: shopIdStr };
   if (externalId != null) selector.externalId = externalId;
   else if (email) selector.email = email;
   else if (phone) selector.phone = phone;
-  else if (derivedName) selector.name = derivedName;
-  else selector.name = "(no name)";
+  else selector.name = derivedName;
 
-  // Build $set without clobbering with nulls
+  // Build $set, avoiding null clobbers
   const setDoc: Record<string, any> = {
     shopId: shopIdStr,
     externalId: externalId ?? null,
@@ -353,24 +352,34 @@ export async function upsertCustomerFromAutoflowEvent(payload: any, shopIdRaw: s
     lastName: lastName ?? null,
     email,
     phone,
-    updatedAt: now,
     provider: "autoflow",
+    updatedAt: now,
     lastEventAt: now,
   };
-  if (lastTicketId != null) setDoc.lastTicketId = lastTicketId;
-  if (lastStatus != null) setDoc.lastStatus = lastStatus;
-  if (status != null) setDoc.status = status;
-  if (vin) setDoc["vehicle.vin"] = vin;
-  if (mileage != null) setDoc["vehicle.odometer"] = mileage;
-  if (vehicleMeta.year != null) setDoc["vehicle.year"] = vehicleMeta.year;
-  if (vehicleMeta.make != null) setDoc["vehicle.make"] = vehicleMeta.make;
-  if (vehicleMeta.model != null) setDoc["vehicle.model"] = vehicleMeta.model;
-  if (vehicleMeta.license != null) setDoc["vehicle.license"] = vehicleMeta.license;
+
+  if (ro != null) setDoc.lastTicketId = ro;
+  if (rawStatus != null) {
+    setDoc.lastStatus = rawStatus;
+    setDoc.status = rawStatus; // store exactly as sent
+  }
+
+  if (vehDoc) {
+    const v: any = {};
+    if (vehDoc.vin) v.vin = vehDoc.vin;
+    if (vehDoc.year !== undefined) v.year = vehDoc.year;
+    if (vehDoc.make !== undefined) v.make = vehDoc.make;
+    if (vehDoc.model !== undefined) v.model = vehDoc.model;
+    if (vehDoc.license !== undefined) v.license = vehDoc.license;
+    if (vehDoc.odometer !== undefined) v.odometer = vehDoc.odometer;
+    setDoc.vehicle = v;
+    if (vehDoc.vin) setDoc.lastVin = vehDoc.vin;
+    if (vehDoc.odometer !== undefined) setDoc.lastMileage = vehDoc.odometer;
+  }
 
   await db.collection("customers").updateOne(
     selector,
     {
-      $setOnInsert: { createdAt: now, openedAt: now, status: status ?? "open" },
+      $setOnInsert: { createdAt: now, openedAt: now, status: rawStatus ?? "open" },
       $set: setDoc,
     },
     { upsert: true },
@@ -402,7 +411,7 @@ export type OpenCustomer = {
 /**
  * Fetch rows the dashboard expects:
  *  - Accepts shopId as number or string
- *  - Excludes closed/appointment
+ *  - Excludes statuses in CLOSED_SET (no transformation performed elsewhere)
  *  - Requires a VIN
  *  - Sorts by updatedAt desc
  */
