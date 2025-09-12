@@ -45,7 +45,79 @@ function StatusChip({ value }: { value: unknown }) {
   return <>{s || ""}</>;
 }
 
-/* ---------- local OEM schedule directly from Mongo ---------- */
+/* ---------- resolve current miles: RO → AutoFlow → vehicle ---------- */
+async function getLatestMilesForVin(db: any, vinRaw: string): Promise<number | null> {
+  const vin = String(vinRaw || "").toUpperCase();
+  const toPos = (v: unknown) => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  // Latest RO mileage
+  const ro = await db.collection("repair_orders").findOne(
+    { vin },
+    { sort: { updatedAt: -1, createdAt: -1 }, projection: { mileage: 1 } }
+  );
+  const mRO = toPos(ro?.mileage);
+
+  // Latest AF or manual close event with mileage
+  const af = await db.collection("events").aggregate([
+    {
+      $match: {
+        $expr: {
+          $eq: [
+            {
+              $toUpper: {
+                $ifNull: ["$vehicleVin", { $ifNull: ["$vin", "$payload.vehicle.vin"] }],
+              },
+            },
+            vin,
+          ],
+        },
+        $or: [{ provider: "autoflow" }, { provider: "ui", type: "manual_closed" }],
+      },
+    },
+    {
+      $addFields: {
+        createdAtDate: {
+          $cond: [
+            { $eq: [{ $type: "$createdAt" }, "date"] },
+            "$createdAt",
+            { $dateFromString: { dateString: { $toString: "$createdAt" }, onError: null, onNull: null } },
+          ],
+        },
+      },
+    },
+    { $sort: { createdAtDate: -1 } },
+    { $limit: 1 },
+    {
+      $project: {
+        _id: 0,
+        miles: {
+          $ifNull: [
+            "$payload.ticket.mileage",
+            {
+              $ifNull: [
+                "$payload.mileage",
+                { $ifNull: ["$payload.vehicle.mileage", { $ifNull: ["$payload.vehicle.miles", "$payload.vehicle.odometer"] }] },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  ]).next();
+  const mAF = toPos(af?.miles);
+
+  // Vehicle-level odometer/lastMileage
+  const veh = await db.collection("vehicles").findOne({ vin }, { projection: { odometer: 1, lastMileage: 1 } });
+  const mVeh = toPos(veh?.odometer) ?? toPos(veh?.lastMileage);
+
+  return mRO ?? mAF ?? mVeh ?? null;
+}
+
+/* ---------- local OEM schedule directly from Mongo (unchanged) ---------- */
 async function getLocalOeFromMongo(vin: string) {
   const db = await getDb();
   const SQUISH = toSquish(vin);
@@ -203,6 +275,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         vin: 1,
         license: 1,
         lastMileage: 1,
+        odometer: 1,
         updatedAt: 1,
         customerId: 1,
       },
@@ -225,6 +298,9 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     );
   }
 
+  // ✅ Resolve current miles (used in header and to patch the latest RO row if it's 0)
+  const resolvedMiles = await getLatestMilesForVin(db, vin);
+
   const customer = vehicle.customerId
     ? await db.collection("customers").findOne(
         { _id: vehicle.customerId },
@@ -233,8 +309,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     : null;
 
   const ownerName =
-    [customer?.firstName, customer?.lastName].filter(Boolean).join(" ").trim() ||
-    (customer?.name || "");
+    [customer?.firstName, customer?.lastName].filter(Boolean).join(" ").trim() || (customer?.name || "");
 
   const ros = await db
     .collection("repair_orders")
@@ -260,7 +335,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     ? await fetchCarfaxWithCache(shopId, vin, 7 * 24 * 60 * 60 * 1000)
     : { ok: false, error: "CARFAX not configured." as const };
 
-  // Miles/day from CARFAX
+  // Miles/day from CARFAX (ignore invalid/zero/older 'today' readings)
   type MpDCalc = {
     mpdFromToday?: number | null;
     mpdFromTwo?: number | null;
@@ -273,21 +348,27 @@ export default async function VehicleDetailPage({ params }: PageProps) {
   const mpd: MpDCalc = {};
   if ((carfax as any).ok && Array.isArray((carfax as any).serviceRecords)) {
     const recs = (carfax as any).serviceRecords
-      .map((r: any) => ({
-        date: parseCarfaxDate(r?.date ?? null),
-        miles: typeof r?.odometer === "number" ? r.odometer : null,
-      }))
+      .map((r: any) => ({ date: parseCarfaxDate(r?.date ?? null), miles: typeof r?.odometer === "number" ? r.odometer : null }))
       .filter((r: any) => r.date && typeof r.miles === "number") as { date: Date; miles: number }[];
 
     recs.sort((a, b) => b.date.getTime() - a.date.getTime());
 
     const now = new Date();
-    const todayMiles = typeof vehicle.lastMileage === "number" ? vehicle.lastMileage : null;
+    const todayMilesRaw =
+      typeof resolvedMiles === "number"
+        ? resolvedMiles
+        : typeof vehicle.lastMileage === "number"
+        ? vehicle.lastMileage
+        : null;
 
-    if (todayMiles != null && recs[0]) {
+    // valid only if positive and not behind latest CARFAX miles
+    const todayIsValid = typeof todayMilesRaw === "number" && todayMilesRaw > 0 && (!recs[0] || todayMilesRaw >= recs[0].miles);
+
+    if (todayIsValid && recs[0]) {
       const days = Math.max(1, daysBetween(now, recs[0].date));
-      const delta = todayMiles - recs[0].miles;
-      mpd.mpdFromToday = delta / days;
+      const delta = (todayMilesRaw as number) - recs[0].miles;
+      const val = delta / days;
+      mpd.mpdFromToday = Math.abs(val) < 0.01 ? null : val; // treat near-zero as no signal
       mpd.latestDate = recs[0].date;
       mpd.latestMiles = recs[0].miles;
     }
@@ -303,7 +384,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
     if (mpd.mpdFromToday != null && mpd.mpdFromTwo != null) {
       mpd.mpdBlended = (mpd.mpdFromToday + mpd.mpdFromTwo) / 2;
     } else {
-      mpd.mpdBlended = mpd.mpdFromToday ?? mpd.mpdFromTwo ?? null;
+      mpd.mpdBlended = mpd.mpdFromTwo ?? mpd.mpdFromToday ?? null;
     }
   }
 
@@ -337,7 +418,13 @@ export default async function VehicleDetailPage({ params }: PageProps) {
           </div>
         )}
         <div>
-          <span className="font-medium">Last Miles:</span> {fmtMiles(vehicle.lastMileage)}
+          <span className="font-medium">Last Miles:</span>{" "}
+          {fmtMiles(
+            (() => {
+              const m = (resolvedMiles ?? vehicle.lastMileage) as number | null | undefined;
+              return typeof m === "number" && m > 0 ? m : null;
+            })()
+          )}
         </div>
         <div className="text-neutral-600">
           Updated: {vehicle.updatedAt ? new Date(vehicle.updatedAt).toLocaleString() : ""}
@@ -358,17 +445,36 @@ export default async function VehicleDetailPage({ params }: PageProps) {
               </tr>
             </thead>
             <tbody>
-              {ros.map((r: any, i: number) => (
-                <tr key={`${r._id}-${i}`} className="border-b last:border-b-0">
-                  <td className="py-2 pr-4"><code>{r.roNumber || ""}</code></td>
-                  <td className="py-2 pr-4">{r.status || ""}</td>
-                  <td className="py-2 pr-4">{fmtMiles(r.mileage)}</td>
-                  <td className="py-2 pr-4">{r.updatedAt ? new Date(r.updatedAt).toLocaleString() : ""}</td>
-                </tr>
-              ))}
+              {ros.map((r: any, i: number) => {
+                const isLatest = i === 0;
+                const rawMiles = typeof r.mileage === "number" ? r.mileage : null;
+                const displayMiles =
+                  isLatest && (!rawMiles || rawMiles <= 0) && resolvedMiles != null ? resolvedMiles : rawMiles;
+                const needsHighlight = isLatest && (!rawMiles || rawMiles <= 0);
+
+                return (
+                  <tr key={`${r._id}-${i}`} className="border-b last:border-b-0">
+                    <td className="py-2 pr-4">
+                      <code>{r.roNumber || ""}</code>
+                    </td>
+                    <td className="py-2 pr-4">{r.status || ""}</td>
+                    <td className="py-2 pr-4">
+                      <span className={needsHighlight ? "bg-red-100 px-1 rounded" : undefined}>
+                        {fmtMiles(displayMiles)}
+                      </span>
+                      {needsHighlight && resolvedMiles != null && (
+                        <span className="ml-2 text-[11px] text-neutral-500">(resolved)</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4">{r.updatedAt ? new Date(r.updatedAt).toLocaleString() : ""}</td>
+                  </tr>
+                );
+              })}
               {ros.length === 0 && (
                 <tr>
-                  <td className="py-6 text-neutral-600" colSpan={4}>No repair orders for this vehicle yet.</td>
+                  <td className="py-6 text-neutral-600" colSpan={4}>
+                    No repair orders for this vehicle yet.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -381,7 +487,9 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">DVI Results {latestRoNumber ? `(RO ${latestRoNumber})` : ""}</h2>
           {!cfg.configured && (
-            <Link href="/dashboard/settings/autoflow" className="text-sm underline">Connect AutoFlow</Link>
+            <Link href="/dashboard/settings/autoflow" className="text-sm underline">
+              Connect AutoFlow
+            </Link>
           )}
         </div>
 
@@ -394,7 +502,9 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         {(dvi as any).ok && (
           <div className="rounded-2xl border p-4 space-y-4 text-sm">
             <div className="grid gap-1">
-              <div><span className="font-medium">Sheet:</span> {(dvi as any).sheetName || "(unknown sheet)"}</div>
+              <div>
+                <span className="font-medium">Sheet:</span> {(dvi as any).sheetName || "(unknown sheet)"}
+              </div>
               <div>
                 <span className="font-medium">Time:</span>{" "}
                 {(dvi as any).timestamp ? new Date((dvi as any).timestamp).toLocaleString() : "(unknown)"}
@@ -406,9 +516,21 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                 </div>
               )}
               <div className="flex gap-4 flex-wrap">
-                {(dvi as any).pdfUrl && <a href={(dvi as any).pdfUrl} target="_blank" rel="noopener noreferrer" className="underline">Open DVI PDF</a>}
-                {(dvi as any).shopUrl && <a href={(dvi as any).shopUrl} target="_blank" rel="noopener noreferrer" className="underline">Shop View</a>}
-                {(dvi as any).customerUrl && <a href={(dvi as any).customerUrl} target="_blank" rel="noopener noreferrer" className="underline">Customer View</a>}
+                {(dvi as any).pdfUrl && (
+                  <a href={(dvi as any).pdfUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                    Open DVI PDF
+                  </a>
+                )}
+                {(dvi as any).shopUrl && (
+                  <a href={(dvi as any).shopUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                    Shop View
+                  </a>
+                )}
+                {(dvi as any).customerUrl && (
+                  <a href={(dvi as any).customerUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                    Customer View
+                  </a>
+                )}
               </div>
             </div>
 
@@ -417,7 +539,8 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                 {(dvi as any).categories.map((cat: any, i: number) => (
                   <div key={i} className="rounded-xl border p-3">
                     <div className="font-medium">
-                      {cat.name || "(Category)"}{cat.video ? " • has video" : ""}
+                      {cat.name || "(Category)"}
+                      {cat.video ? " • has video" : ""}
                     </div>
                     {cat.videoNotes && <div className="text-neutral-600 text-xs">{cat.videoNotes}</div>}
                     <div className="mt-2">
@@ -435,17 +558,27 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                             {cat.items.map((it: any, j: number) => (
                               <tr key={j} className="border-b last:border-b-0 align-top">
                                 <td className="py-1 pr-3">{it.name || ""}</td>
-                                <td className="py-1 pr-3"><StatusChip value={it.status} /></td>
+                                <td className="py-1 pr-3">
+                                  <StatusChip value={it.status} />
+                                </td>
                                 <td className="py-1 pr-3 whitespace-pre-wrap">{it.notes || ""}</td>
                                 <td className="py-1 pr-3">
                                   <div className="flex gap-2 flex-wrap">
                                     {Array.isArray(it.pictures) &&
                                       it.pictures.map((u: string, k: number) =>
-                                        u ? <a key={`p-${k}`} href={u} target="_blank" rel="noopener noreferrer" className="underline">photo {k + 1}</a> : null
+                                        u ? (
+                                          <a key={`p-${k}`} href={u} target="_blank" rel="noopener noreferrer" className="underline">
+                                            photo {k + 1}
+                                          </a>
+                                        ) : null
                                       )}
                                     {Array.isArray(it.videos) &&
                                       it.videos.map((u: string, k: number) =>
-                                        u ? <a key={`v-${k}`} href={u} target="_blank" rel="noopener noreferrer" className="underline">video {k + 1}</a> : null
+                                        u ? (
+                                          <a key={`v-${k}`} href={u} target="_blank" rel="noopener noreferrer" className="underline">
+                                            video {k + 1}
+                                          </a>
+                                        ) : null
                                       )}
                                   </div>
                                 </td>
@@ -479,23 +612,30 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">CARFAX</h2>
           {!carfaxCfg.configured && (
-            <Link href="/dashboard/settings/carfax" className="text-sm underline">Connect CARFAX</Link>
+            <Link href="/dashboard/settings/carfax" className="text-sm underline">
+              Connect CARFAX
+            </Link>
           )}
         </div>
 
-        {!(carfax as any).ok && (
-          <div className="text-sm text-red-600">Failed to load CARFAX: {(carfax as any).error}</div>
-        )}
+        {!(carfax as any).ok && <div className="text-sm text-red-600">Failed to load CARFAX: {(carfax as any).error}</div>}
 
         {(carfax as any).ok && (
           <div className="rounded-2xl border p-4 space-y-4 text-sm">
             <div className="grid gap-1">
-              <div><span className="font-medium">VIN:</span> {(carfax as any).vin}</div>
+              <div>
+                <span className="font-medium">VIN:</span> {(carfax as any).vin}
+              </div>
               {(carfax as any).reportDate && (
-                <div><span className="font-medium">Report Date:</span> {(carfax as any).reportDate}</div>
+                <div>
+                  <span className="font-medium">Report Date:</span> {(carfax as any).reportDate}
+                </div>
               )}
               {(carfax as any).lastReportedMileage != null && (
-                <div><span className="font-medium">Last Reported Miles:</span> {fmtMiles((carfax as any).lastReportedMileage)}</div>
+                <div>
+                  <span className="font-medium">Last Reported Miles:</span>{" "}
+                  {fmtMiles((carfax as any).lastReportedMileage)}
+                </div>
               )}
             </div>
 
@@ -509,7 +649,9 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                       {mpd.latestDate ? `(${mpd.latestDate.toLocaleDateString()} → today)` : ""}:{" "}
                       <strong>{mpd.mpdFromToday.toFixed(1)}</strong> mi/day
                       {mpd.latestMiles != null ? ` • last miles: ${fmtMiles(mpd.latestMiles)}` : ""}
-                      {typeof vehicle.lastMileage === "number" ? ` • today miles: ${fmtMiles(vehicle.lastMileage)}` : ""}
+                      {typeof (resolvedMiles ?? vehicle.lastMileage) === "number"
+                        ? ` • today miles: ${fmtMiles((resolvedMiles ?? vehicle.lastMileage) as number)}`
+                        : ""}
                     </li>
                   )}
                   {mpd.mpdFromTwo != null && (
@@ -517,12 +659,14 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                       From two latest CARFAX entries{" "}
                       {mpd.latestDate && mpd.prevDate
                         ? `(${mpd.prevDate.toLocaleDateString()} → ${mpd.latestDate.toLocaleDateString()})`
-                        : ""}:{" "}
-                      <strong>{mpd.mpdFromTwo.toFixed(1)}</strong> mi/day
+                        : ""}
+                      : <strong>{mpd.mpdFromTwo.toFixed(1)}</strong> mi/day
                     </li>
                   )}
                   {mpd.mpdBlended != null && (
-                    <li>Blended estimate: <strong>{mpd.mpdBlended.toFixed(1)}</strong> mi/day</li>
+                    <li>
+                      Blended estimate: <strong>{mpd.mpdBlended.toFixed(1)}</strong> mi/day
+                    </li>
                   )}
                 </ul>
               </div>
@@ -573,8 +717,8 @@ export default async function VehicleDetailPage({ params }: PageProps) {
         <div className="rounded-2xl border p-4 space-y-3 text-sm">
           <div className="text-neutral-700">
             Using local schedule for <code>{vin}</code>{" "}
-            {typeof vehicle.lastMileage === "number"
-              ? `(current miles: ${fmtMiles(vehicle.lastMileage)})`
+            {typeof (resolvedMiles ?? vehicle.lastMileage) === "number"
+              ? `(current miles: ${fmtMiles((resolvedMiles ?? vehicle.lastMileage) as number)})`
               : ""}
           </div>
 
@@ -597,7 +741,7 @@ export default async function VehicleDetailPage({ params }: PageProps) {
                     </td>
                     <td className="py-1 pr-3">{s.category || ""}</td>
                     <td className="py-1 pr-3">
-                      {(s.miles || s.months) ? (
+                      {s.miles || s.months ? (
                         <>
                           {s.miles ? `${fmtMiles(s.miles)} mi` : ""}
                           {s.miles && s.months ? " / " : ""}

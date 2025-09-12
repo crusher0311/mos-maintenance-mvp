@@ -290,8 +290,7 @@ function triage({
       else dueAtDate = addMonths(today, 0 + intervalMonths);
     }
 
-    const milesToGo =
-      currentMiles != null && dueAtMiles != null ? dueAtMiles - currentMiles : null;
+    const milesToGo = currentMiles != null && dueAtMiles != null ? dueAtMiles - currentMiles : null;
 
     const daysToGo =
       dueAtDate != null ? Math.ceil((dueAtDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null;
@@ -399,24 +398,32 @@ export default async function VehiclePlanPage({ params }: PageProps) {
     ? await fetchCarfaxWithCache(shopId, vin, 7 * 24 * 60 * 60 * 1000)
     : { ok: false, error: "CARFAX not configured." as const };
 
-  // Miles/day (optional)
+  // Miles/day (same “today miles” guard as detail page)
   let mpdBlended: number | null = null;
   if ((carfax as any).ok && Array.isArray((carfax as any).serviceRecords)) {
     const recs = (carfax as any).serviceRecords
       .map((r: any) => ({ date: parseCarfaxDate(r?.date ?? null), miles: typeof r?.odometer === "number" ? r.odometer : null }))
       .filter((r: any) => r.date && typeof r.miles === "number") as { date: Date; miles: number }[];
     recs.sort((a, b) => b.date.getTime() - a.date.getTime());
-    const todayMiles = typeof vehicle?.lastMileage === "number" ? vehicle.lastMileage : null;
-    let fromToday: number | null = null, fromTwo: number | null = null;
+
+    const todayMiles =
+      typeof vehicle?.lastMileage === "number" && vehicle.lastMileage > 0 && (!recs[0] || vehicle.lastMileage >= recs[0].miles)
+        ? vehicle.lastMileage
+        : null;
+
+    let fromToday: number | null = null,
+      fromTwo: number | null = null;
+
     if (todayMiles != null && recs[0]) {
       const d = Math.max(1, daysBetween(new Date(), recs[0].date));
-      fromToday = (todayMiles - recs[0].miles) / d;
+      const val = (todayMiles - recs[0].miles) / d;
+      fromToday = Math.abs(val) < 0.01 ? null : val; // ignore ~0.0 rates
     }
     if (recs[0] && recs[1]) {
       const d = Math.max(1, daysBetween(recs[0].date, recs[1].date));
       fromTwo = (recs[0].miles - recs[1].miles) / d;
     }
-    mpdBlended = fromToday != null && fromTwo != null ? (fromToday + fromTwo) / 2 : (fromToday ?? fromTwo ?? null);
+    mpdBlended = fromToday != null && fromTwo != null ? (fromToday + fromTwo) / 2 : fromTwo ?? fromToday ?? null;
   }
 
   // OEM schedule (local Mongo)
@@ -470,22 +477,30 @@ export default async function VehiclePlanPage({ params }: PageProps) {
         <div className="mx-auto max-w-5xl px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm text-neutral-600">
-              <Link href={`/dashboard/vehicles/${vin}`} className="underline">← Back</Link>
+              <Link href={`/dashboard/vehicles/${vin}`} className="underline">
+                ← Back
+              </Link>
             </div>
             <h1 className="text-xl sm:text-2xl font-bold truncate">
               {(vehicle ? [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") : "Vehicle")} — Plan
             </h1>
             <div className="text-sm text-neutral-600">
               VIN <code>{vin}</code>
-              {currentMiles != null && <> • Current: {fmtMiles(currentMiles)} mi</>}
+              {currentMiles != null && currentMiles > 0 && <> • Current: {fmtMiles(currentMiles)} mi</>}
               {mpdBlended != null && <> • ~{mpdBlended.toFixed(1)} mi/day</>}
             </div>
           </div>
 
           <nav className="flex items-center gap-2 text-xs sm:text-sm">
-            <a href="#overdue" className="rounded-full px-3 py-1 bg-red-600 text-white">Overdue {counts.overdue}</a>
-            <a href="#soon" className="rounded-full px-3 py-1 bg-amber-600 text-white">Due Soon {counts.soon}</a>
-            <a href="#upcoming" className="rounded-full px-3 py-1 bg-emerald-600 text-white">Upcoming {counts.upcoming}</a>
+            <a href="#overdue" className="rounded-full px-3 py-1 bg-red-600 text-white">
+              Overdue {counts.overdue}
+            </a>
+            <a href="#soon" className="rounded-full px-3 py-1 bg-amber-600 text-white">
+              Due Soon {counts.soon}
+            </a>
+            <a href="#upcoming" className="rounded-full px-3 py-1 bg-emerald-600 text-white">
+              Upcoming {counts.upcoming}
+            </a>
           </nav>
         </div>
       </div>
@@ -529,7 +544,11 @@ export default async function VehiclePlanPage({ params }: PageProps) {
                       </>
                     )}
                     {t.dueAtMiles != null && t.dueAtDate != null && <> • </>}
-                    {t.dueAtDate != null && <>By <strong>{t.dueAtDate.toLocaleDateString()}</strong></>}
+                    {t.dueAtDate != null && (
+                      <>
+                        By <strong>{t.dueAtDate.toLocaleDateString()}</strong>
+                      </>
+                    )}
                   </div>
 
                   {t.last?.miles != null && (
@@ -560,8 +579,7 @@ export default async function VehiclePlanPage({ params }: PageProps) {
                       </div>
                       {t.bump && (
                         <div>
-                          <span className="font-medium">DVI:</span>{" "}
-                          {t.bump === "red" ? "🔴 flagged" : "🟡 caution"}
+                          <span className="font-medium">DVI:</span> {t.bump === "red" ? "🔴 flagged" : "🟡 caution"}
                         </div>
                       )}
                     </div>
@@ -594,13 +612,23 @@ export default async function VehiclePlanPage({ params }: PageProps) {
                         {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
                       </span>
                     )}
-                    {t.bump === "yellow" && <span className="rounded-full bg-amber-600 text-white px-2 py-0.5">DVI 🟡</span>}
+                    {t.bump === "yellow" && (
+                      <span className="rounded-full bg-amber-600 text-white px-2 py-0.5">DVI 🟡</span>
+                    )}
                   </div>
 
                   <div className="text-sm mt-2">
-                    {t.milesToGo != null && t.milesToGo > 0 && <>In ~<strong>{fmtMiles(t.milesToGo)}</strong> mi</>}
+                    {t.milesToGo != null && t.milesToGo > 0 && (
+                      <>
+                        In ~<strong>{fmtMiles(t.milesToGo)}</strong> mi
+                      </>
+                    )}
                     {t.milesToGo != null && t.daysToGo != null && <> • </>}
-                    {t.daysToGo != null && t.daysToGo > 0 && <>In ~<strong>{t.daysToGo}</strong> days</>}
+                    {t.daysToGo != null && t.daysToGo > 0 && (
+                      <>
+                        In ~<strong>{t.daysToGo}</strong> days
+                      </>
+                    )}
                   </div>
 
                   {t.last?.miles != null && (
@@ -662,9 +690,17 @@ export default async function VehiclePlanPage({ params }: PageProps) {
                   </div>
 
                   <div className="text-sm mt-2">
-                    {t.dueAtMiles != null && <>Next at ~<strong>{fmtMiles(t.dueAtMiles)}</strong> mi</>}
+                    {t.dueAtMiles != null && (
+                      <>
+                        Next at ~<strong>{fmtMiles(t.dueAtMiles)}</strong> mi
+                      </>
+                    )}
                     {t.dueAtMiles != null && t.dueAtDate != null && <> • </>}
-                    {t.dueAtDate != null && <>or ~<strong>{t.dueAtDate.toLocaleDateString()}</strong></>}
+                    {t.dueAtDate != null && (
+                      <>
+                        or ~<strong>{t.dueAtDate.toLocaleDateString()}</strong>
+                      </>
+                    )}
                   </div>
 
                   <details className="mt-2">
@@ -694,17 +730,17 @@ export default async function VehiclePlanPage({ params }: PageProps) {
         <details className="mt-6">
           <summary className="cursor-pointer">Debug (inputs)</summary>
           <pre className="mt-2 text-xs bg-gray-50 p-3 rounded overflow-auto max-h-72">
-{JSON.stringify(
-  {
-    currentMiles,
-    mpdBlended,
-    carfaxOk: (carfax as any).ok ?? false,
-    dviOk: (dvi as any).ok ?? false,
-    oemCount: oemItems.length
-  },
-  null,
-  2
-)}
+            {JSON.stringify(
+              {
+                currentMiles,
+                mpdBlended,
+                carfaxOk: (carfax as any).ok ?? false,
+                dviOk: (dvi as any).ok ?? false,
+                oemCount: oemItems.length,
+              },
+              null,
+              2
+            )}
           </pre>
         </details>
       </div>
