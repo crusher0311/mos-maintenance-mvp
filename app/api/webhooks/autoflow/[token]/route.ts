@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 import crypto from "node:crypto";
 import { fetchDviByInvoice, upsertDviSnapshot } from "@/lib/integrations/autoflow";
-import { upsertCustomerFromAutoflowEvent } from "@/lib/models/customers";
+import { upsertCustomerFromEvent } from "@/lib/upsert-customer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +39,25 @@ function getEventName(payload: any): string {
     payload?.name ||
     ""
   );
+}
+
+function resolveVin(payload: any): string | null {
+  return (
+    payload?.vin ??
+    payload?.vehicle?.vin ??
+    payload?.data?.vehicle?.vin ??
+    payload?.ticket?.vehicle?.vin ??
+    null
+  )
+    ? String(
+        payload?.vin ??
+          payload?.vehicle?.vin ??
+          payload?.data?.vehicle?.vin ??
+          payload?.ticket?.vehicle?.vin
+      )
+        .trim()
+        .toUpperCase()
+    : null;
 }
 
 // ---- GET: token validity ------------------------------------------------
@@ -92,7 +111,7 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
   // Persist raw event for audit / console
   await db.collection("events").insertOne({
     provider: "autoflow",
-    shopId: shop.shopId, // keep original type; dashboards handle both string/number
+    shopId: shop.shopId,
     token,
     payload,
     raw,
@@ -101,13 +120,12 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
 
   // ---- Normalize into first-class docs so dashboards light up ---------
   try {
-    const eventName = getEventName(payload);
+    const eventName = String(getEventName(payload)).toLowerCase();
 
-    // 1) Make sure a visible/open customer exists or is refreshed
-    await upsertCustomerFromAutoflowEvent(payload, shop.shopId);
+    // 1) Ensure/refresh a customer row for dashboard lists
+    await upsertCustomerFromEvent(db, Number(shop.shopId), payload);
 
-    // 2) (Optional) Auto-close on specific events
-    //    Edit this set to match the events that should close a customer.
+    // 2) Optionally mark a customer closed on terminal events
     const closeTypes = new Set<string>([
       "dvi_signoff",
       "dvi.signoff",
@@ -116,26 +134,19 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
       "work_completed",
       "ticket_closed",
       "ticket.closed",
+      "close",
+      "closed",
     ]);
-    if (closeTypes.has(eventName?.toLowerCase())) {
+
+    if (closeTypes.has(eventName)) {
       const now = new Date();
-
-      // Try to resolve a VIN or external customer selector from the payload
-      const vin =
-        (payload?.vin ??
-          payload?.vehicle?.vin ??
-          payload?.data?.vehicle?.vin ??
-          payload?.ticket?.vehicle?.vin ??
-          "")
-          .toString()
-          .toUpperCase() || null;
-
-      const shopIdStr = String(shop.shopId);
+      const vin = resolveVin(payload);
+      const shopOr = [{ shopId: shop.shopId }, { shopId: Number(shop.shopId) }];
 
       await db.collection("customers").updateOne(
         {
           $and: [
-            { $or: [{ shopId: shopIdStr }, { shopId: Number(shopIdStr) }] },
+            { $or: shopOr as any },
             vin ? { "vehicle.vin": vin } : {},
           ],
         },
@@ -143,21 +154,18 @@ export async function POST(req: NextRequest, ctx: { params: { token: string } })
       );
     }
 
-    // 3) Auto-fetch DVI on completion/signoff updates
-    const dviEvent =
-      /dvi/i.test(String(eventName)) &&
-      /(signoff|complete|completed|update)/i.test(String(eventName));
+    // 3) Auto-fetch DVI snapshot on signoff/completion-ish events
+    const isDviEvent = /dvi/i.test(eventName) && /(signoff|complete|completed|update)/i.test(eventName);
 
-    // Extract RO/Invoice similar to prior samples
     const roNumber =
       payload?.ticket?.invoice ??
       payload?.ticket?.id ??
       payload?.event?.invoice ??
       null;
 
-    if (dviEvent && roNumber != null) {
-      const dvi = await fetchDviByInvoice(shop.shopId, String(roNumber));
-      await upsertDviSnapshot(shop.shopId, String(roNumber), dvi);
+    if (isDviEvent && roNumber != null) {
+      const dvi = await fetchDviByInvoice(Number(shop.shopId), String(roNumber));
+      await upsertDviSnapshot(Number(shop.shopId), String(roNumber), dvi);
     }
   } catch (e) {
     // Swallow normalization errors; raw event is still stored for replay
