@@ -1,6 +1,3 @@
-Here’s the full updated file (drop-in replace). I only changed the AF lookup to prefer the most recent **non-closed/non-appointment** event and fall back to the latest event if needed.
-
-```tsx
 // app/dashboard/page.tsx
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
