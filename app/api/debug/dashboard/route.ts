@@ -2,39 +2,57 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const shopParam = url.searchParams.get("shop") ?? "";
+  if (!shopParam) {
+    return NextResponse.json({ ok: false, error: "missing ?shop" }, { status: 400 });
+  }
+
+  const shopIdNum = Number(shopParam);
+  const shopIdStr = String(shopParam);
   const db = await getDb();
-  const shop = req.nextUrl.searchParams.get("shop");
-  if (!shop) return NextResponse.json({ error: "missing ?shop=" }, { status: 400 });
 
-  // mirror the page's key constraints (VIN + not closed/appointment)
-  const CLOSED_SET = ["closed", "Close", "CLOSED", "Appointment"];
+  // Wide filter:
+  // - shopId matches number OR string
+  // - exclude obvious closed/appointment
+  // - require either vehicle.vin OR lastVin
+  const filter = {
+    $and: [
+      { $or: [{ shopId: shopIdNum }, { shopId: shopIdStr }] },
+      { status: { $nin: ["closed", "Close", "CLOSED", "Appointment"] } },
+      {
+        $or: [
+          { "vehicle.vin": { $exists: true, $ne: "" } },
+          { lastVin: { $exists: true, $ne: "" } },
+        ],
+      },
+    ],
+  };
 
-  const shopIdNum = Number(shop);
-  const shopIdStr = String(shop);
+  const projection = {
+    name: 1,
+    status: 1,
+    lastStatus: 1,
+    lastTicketId: 1,
+    updatedAt: 1,
+    lastVin: 1,
+    vehicle: { year: 1, make: 1, model: 1, vin: 1, odometer: 1, license: 1 },
+  };
 
-  const rows = await db.collection("customers").find(
-    {
-      $and: [
-        { $or: [{ shopId: shopIdNum }, { shopId: shopIdStr }] },
-        { status: { $nin: CLOSED_SET } },
-        { "vehicle.vin": { $exists: true, $ne: "" } }
-      ]
-    },
-    {
-      projection: {
-        name: 1, firstName: 1, lastName: 1,
-        status: 1, lastStatus: 1, lastTicketId: 1, updatedAt: 1,
-        vehicle: { year: 1, make: 1, model: 1, vin: 1, odometer: 1, license: 1 }
-      }
-    }
-  ).sort({ updatedAt: -1 }).limit(50).toArray();
+  const coll = db.collection("customers");
+  const count = await coll.countDocuments(filter);
+  const sample = await coll
+    .find(filter, { projection })
+    .sort({ updatedAt: -1 })
+    .limit(10)
+    .toArray();
 
   return NextResponse.json({
+    ok: true,
     shop: shopIdStr,
-    count: rows.length,
-    sample: rows.slice(0, 5),
+    count,
+    sample,
   });
 }
