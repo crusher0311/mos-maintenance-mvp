@@ -12,7 +12,7 @@ const RECOMMENDED_HREF = (vin: string) =>
   `/dashboard/recommended?vin=${encodeURIComponent(vin)}`;
 
 type Row = {
-  _id: string;
+  _id: string; // vin key
   updatedAt?: Date | string | null;
   af?: { status?: string; createdAt?: Date | string; miles?: number | null } | null;
   displayName: string | null;
@@ -51,86 +51,65 @@ export default async function DashboardPage() {
   );
   if (!user) redirect("/login");
 
-  // Only non-closed customers
-  const statusNotClosed = {
-    $or: [{ status: { $exists: false } }, { status: null }, { status: { $ne: "closed" } }],
-  };
-
-  const rows = await db.collection("customers").aggregate<Row>([
-    { $match: { $and: [{ $or: [{ shopId: String(user.shopId) }, { shopId: Number(user.shopId) }] }, statusNotClosed] } },
-
-    // Latest vehicle
+  // Build rows from latest AutoFlow events per VIN (hide closed/appointments)
+  const rows = await db.collection("events").aggregate<Row>([
     {
-      $lookup: {
-        from: "vehicles",
-        let: { cid: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$customerId", "$$cid"] } } },
-          {
-            $addFields: {
-              vTime: {
-                $cond: [
-                  { $eq: [{ $type: "$updatedAt" }, "date"] },
-                  "$updatedAt",
-                  { $dateFromString: { dateString: { $toString: { $ifNull: ["$updatedAt", "$createdAt"] } }, onError: null, onNull: null } },
-                ],
-              },
-            },
-          },
-          { $sort: { vTime: -1 } },
-          { $limit: 1 },
-          { $project: { year: 1, make: 1, model: 1, vin: 1, odometer: 1, lastMiles: 1 } },
-        ],
-        as: "vehicle",
-      },
+      $match: {
+        $and: [
+          { $or: [{ shopId: String(user.shopId) }, { shopId: Number(user.shopId) }] },
+          { provider: "autoflow" }
+        ]
+      }
     },
-    { $addFields: { vehicle: { $ifNull: [{ $arrayElemAt: ["$vehicle", 0] }, null] } } },
-
-    // Latest repair order (mileage + RO# + YMM fallback)
-    {
-      $lookup: {
-        from: "repair_orders",
-        let: { cid: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$customerId", "$$cid"] } } },
-          {
-            $addFields: {
-              roTime: {
-                $cond: [
-                  { $eq: [{ $type: "$updatedAt" }, "date"] },
-                  "$updatedAt",
-                  { $dateFromString: { dateString: { $toString: { $ifNull: ["$updatedAt", "$createdAt"] } }, onError: null, onNull: null } },
-                ],
-              },
-            },
-          },
-          { $sort: { roTime: -1 } },
-          { $limit: 1 },
-          { $project: { roNumber: 1, mileage: 1, customer: 1, year: 1, make: 1, model: 1, vin: 1 } },
-        ],
-        as: "latestRO",
-      },
-    },
-    { $addFields: { latestRO: { $ifNull: [{ $arrayElemAt: ["$latestRO", 0] }, null] } } },
-
-    // Normalize customer updatedAt
+    // Normalize basic fields we need from events
     {
       $addFields: {
-        updatedAt: {
+        createdAtDate: {
           $cond: [
-            { $eq: [{ $type: "$updatedAt" }, "date"] },
-            "$updatedAt",
-            { $dateFromString: { dateString: { $toString: { $ifNull: ["$updatedAt", "$createdAt"] } }, onError: null, onNull: null } },
-          ],
+            { $eq: [{ $type: "$createdAt" }, "date"] },
+            "$createdAt",
+            {
+              $dateFromString: {
+                dateString: { $toString: "$createdAt" },
+                onError: null,
+                onNull: null
+              }
+            }
+          ]
         },
-      },
+        statusRaw: {
+          $ifNull: [
+            "$payload.ticket.status",
+            { $ifNull: ["$status", { $ifNull: ["$payload.status", "$type"] }] }
+          ]
+        },
+        vinNorm: {
+          $toUpper: {
+            $ifNull: [
+              "$vehicleVin",
+              { $ifNull: ["$vin", "$payload.vehicle.vin"] }
+            ]
+          }
+        }
+      }
     },
-
-    // Compute display fields (name/vehicle/vin/miles/ro) with robust fallbacks
+    // Require VIN
+    { $match: { vinNorm: { $type: "string", $ne: "" } } },
+    // Sort by VIN asc, then time desc, so first in group is the latest per VIN
+    { $sort: { vinNorm: 1, createdAtDate: -1 } },
+    {
+      $group: {
+        _id: "$vinNorm",
+        latest: { $first: "$$ROOT" }
+      }
+    },
+    { $replaceRoot: { newRoot: "$latest" } },
+    // Hide Closed and Appointment statuses
+    { $match: { statusRaw: { $not: /close|appoint/i } } },
+    // Compute display fields
     {
       $addFields: {
-        displayVin: { $ifNull: ["$vehicle.vin", "$latestRO.vin"] },
-
+        // Name from payload; fallback to nested customer fields if used
         displayName: {
           $let: {
             vars: {
@@ -138,327 +117,130 @@ export default async function DashboardPage() {
                 $trim: {
                   input: {
                     $concat: [
-                      { $ifNull: ["$firstName", ""] },
-                      { $cond: [{ $and: [{ $ifNull: ["$firstName", false] }, { $ifNull: ["$lastName", false] }] }, " ", ""] },
-                      { $ifNull: ["$lastName", ""] },
-                    ],
-                  },
-                },
-              },
+                      { $ifNull: ["$payload.customer.firstname", ""] },
+                      {
+                        $cond: [
+                          {
+                            $and: [
+                              { $ifNull: ["$payload.customer.firstname", false] },
+                              { $ifNull: ["$payload.customer.lastname", false] }
+                            ]
+                          },
+                          " ",
+                          ""
+                        ]
+                      },
+                      { $ifNull: ["$payload.customer.lastname", ""] }
+                    ]
+                  }
+                }
+              }
             },
             in: {
               $cond: [
                 { $ne: ["$$full", ""] },
                 "$$full",
-                {
-                  $ifNull: [
-                    "$name",
-                    {
-                      $ifNull: [
-                        "$latestRO.customer.name",
-                        {
-                          $let: {
-                            vars: {
-                              roFull: {
-                                $trim: {
-                                  input: {
-                                    $concat: [
-                                      { $ifNull: ["$latestRO.customer.firstname", ""] },
-                                      {
-                                        $cond: [
-                                          {
-                                            $and: [
-                                              { $ifNull: ["$latestRO.customer.firstname", false] },
-                                              { $ifNull: ["$latestRO.customer.lastname", false] },
-                                            ],
-                                          },
-                                          " ",
-                                          "",
-                                        ],
-                                      },
-                                      { $ifNull: ["$latestRO.customer.lastname", ""] },
-                                    ],
-                                  },
-                                },
-                              },
-                            },
-                            in: { $cond: [{ $ne: ["$$roFull", ""] }, "$$roFull", null] },
-                          },
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          },
+                { $ifNull: ["$payload.customer.name", null] }
+              ]
+            }
+          }
         },
-
+        // Vehicle display from payload
         displayVehicle: {
-          $let: {
-            vars: {
-              vehicleLabel: {
-                $trim: {
-                  input: {
-                    $concat: [
-                      { $toString: { $ifNull: ["$vehicle.year", ""] } },
-                      { $cond: [{ $ifNull: ["$vehicle.year", false] }, " ", ""] },
-                      { $ifNull: ["$vehicle.make", ""] },
-                      { $cond: [{ $ifNull: ["$vehicle.make", false] }, " ", ""] },
-                      { $ifNull: ["$vehicle.model", ""] },
-                    ],
-                  },
-                },
-              },
-            },
-            in: {
-              $cond: [
-                { $ne: ["$$vehicleLabel", ""] },
-                "$$vehicleLabel",
-                {
-                  $trim: {
-                    input: {
-                      $concat: [
-                        { $toString: { $ifNull: ["$latestRO.year", ""] } },
-                        { $cond: [{ $ifNull: ["$latestRO.year", false] }, " ", ""] },
-                        { $ifNull: ["$latestRO.make", ""] },
-                        { $cond: [{ $ifNull: ["$latestRO.make", false] }, " ", ""] },
-                        { $ifNull: ["$latestRO.model", ""] },
-                      ],
-                    },
-                  },
-                },
-              ],
-            },
-          },
+          $trim: {
+            input: {
+              $concat: [
+                { $toString: { $ifNull: ["$payload.vehicle.year", ""] } },
+                { $cond: [{ $ifNull: ["$payload.vehicle.year", false] }, " ", ""] },
+                { $ifNull: ["$payload.vehicle.make", ""] },
+                { $cond: [{ $ifNull: ["$payload.vehicle.make", false] }, " ", ""] },
+                { $ifNull: ["$payload.vehicle.model", ""] }
+              ]
+            }
+          }
         },
-
-        displayRo: { $ifNull: ["$latestRO.roNumber", null] },
-        _milesFromRO: { $ifNull: ["$latestRO.mileage", null] },
-
-        _milesFromVehicle: {
-          $ifNull: [
-            "$vehicle.odometer",
-            { $ifNull: ["$vehicle.lastMiles", null] },
-          ],
-        },
-      },
-    },
-
-    // Require name + VIN
-    {
-      $match: {
-        displayName: { $type: "string", $ne: "" },
-        displayVin: { $type: "string", $ne: "" },
-      },
-    },
-
-    // Latest AF event per VIN with fallback:
-    // - Prefer the most recent NON-closed/non-appointment event
-    // - Fall back to the most recent event of any status
-    {
-      $lookup: {
-        from: "events",
-        let: { vinU: { $toUpper: "$displayVin" } },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $ne: ["$$vinU", ""] },
-                  {
-                    $eq: [
-                      {
-                        $toUpper: {
-                          $ifNull: ["$vehicleVin", { $ifNull: ["$vin", "$payload.vehicle.vin"] }],
-                        },
-                      },
-                      "$$vinU",
-                    ],
-                  },
-                  {
-                    $or: [
-                      { $eq: ["$provider", "autoflow"] },
-                      { $and: [{ $eq: ["$provider", "ui"] }, { $eq: ["$type", "manual_closed"] }] },
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-          {
-            $addFields: {
-              createdAtDate: {
-                $cond: [
-                  { $eq: [{ $type: "$createdAt" }, "date"] },
-                  "$createdAt",
-                  { $dateFromString: { dateString: { $toString: "$createdAt" }, onError: null, onNull: null } },
-                ],
-              },
-              statusRaw: {
+        displayVin: "$vinNorm",
+        displayRo: { $ifNull: ["$payload.ticket.roNumber", null] },
+        af: {
+          createdAt: "$createdAtDate",
+          status: "$statusRaw",
+          miles: {
+            $ifNull: [
+              "$payload.ticket.mileage",
+              {
                 $ifNull: [
-                  "$payload.ticket.status",
-                  { $ifNull: ["$status", { $ifNull: ["$payload.status", "$type"] }] },
-                ],
-              },
-            },
-          },
-          { $sort: { createdAtDate: -1 } },
-          {
-            $facet: {
-              open: [
-                { $match: { statusRaw: { $not: /close|appoint/i } } },
-                { $limit: 1 },
-              ],
-              any: [{ $limit: 1 }],
-            },
-          },
-          {
-            $project: {
-              chosen: {
-                $cond: [
-                  { $gt: [{ $size: "$open" }, 0] },
-                  { $arrayElemAt: ["$open", 0] },
-                  { $arrayElemAt: ["$any", 0] },
-                ],
-              },
-            },
-          },
-          {
-            $project: {
-              _id: 0,
-              createdAt: "$chosen.createdAtDate",
-              status: {
-                $cond: [
-                  { $and: [{ $eq: ["$chosen.provider", "ui"] }, { $eq: ["$chosen.type", "manual_closed"] }] },
-                  "Closed",
-                  "$chosen.statusRaw",
-                ],
-              },
-              miles: {
-                $ifNull: [
-                  "$chosen.payload.ticket.mileage",
+                  "$payload.mileage",
                   {
                     $ifNull: [
-                      "$chosen.payload.mileage",
+                      "$payload.vehicle.mileage",
                       {
                         $ifNull: [
-                          "$chosen.payload.vehicle.mileage",
-                          {
-                            $ifNull: [
-                              "$chosen.payload.vehicle.miles",
-                              { $ifNull: ["$chosen.payload.vehicle.odometer", null] },
-                            ],
-                          },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-        ],
-        as: "af",
-      },
+                          "$payload.vehicle.miles",
+                          { $ifNull: ["$payload.vehicle.odometer", null] }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        updatedAt: "$createdAtDate"
+      }
     },
-    { $addFields: { af: { $ifNull: [{ $arrayElemAt: ["$af", 0] }, null] } } },
-
-    // DVI presence for latest RO
+    // DVI presence using roNumber (if present)
     {
       $lookup: {
         from: "dvi_results",
         let: { ro: "$displayRo" },
         pipeline: [
-          { $match: { $expr: { $and: [{ $ne: ["$$ro", null] }, { $eq: ["$roNumber", "$$ro"] }] } } },
+          {
+            $match: {
+              $expr: { $and: [{ $ne: ["$$ro", null] }, { $eq: ["$roNumber", "$$ro"] }] }
+            }
+          },
           { $limit: 1 },
-          { $project: { _id: 1 } },
+          { $project: { _id: 1 } }
         ],
-        as: "dviRes",
-      },
+        as: "dviRes"
+      }
     },
     {
       $lookup: {
         from: "dvi",
         let: { ro: "$displayRo" },
         pipeline: [
-          { $match: { $expr: { $and: [{ $ne: ["$$ro", null] }, { $eq: ["$roNumber", "$$ro"] }] } } },
+          {
+            $match: {
+              $expr: { $and: [{ $ne: ["$$ro", null] }, { $eq: ["$roNumber", "$$ro"] }] }
+            }
+          },
           { $limit: 1 },
-          { $project: { _id: 1 } },
+          { $project: { _id: 1 } }
         ],
-        as: "dviAlt",
-      },
+        as: "dviAlt"
+      }
     },
     { $addFields: { dviDone: { $gt: [{ $size: { $concatArrays: ["$dviRes", "$dviAlt"] } }, 0] } } },
-
-    // Best available mileage: RO → AF → Vehicle
-    {
-      $addFields: {
-        displayMiles: {
-          $let: {
-            vars: {
-              m1: "$_milesFromRO",
-              m2: "$af.miles",
-              m3: "$_milesFromVehicle",
-            },
-            in: {
-              $cond: [
-                { $and: [{ $ne: ["$$m1", null] }, { $gt: ["$$m1", 0] }] },
-                "$$m1",
-                {
-                  $cond: [
-                    { $and: [{ $ne: ["$$m2", null] }, { $gt: ["$$m2", 0] }] },
-                    "$$m2",
-                    {
-                      $cond: [
-                        { $and: [{ $ne: ["$$m3", null] }, { $gt: ["$$m3", 0] }] },
-                        "$$m3",
-                        null,
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          },
-        },
-      },
-    },
-
-    // Hide Closed and Appointment statuses
-    {
-      $match: {
-        $and: [
-          { $or: [{ "af.status": { $exists: false } }, { "af.status": { $not: /close/i } }] },
-          { $or: [{ "af.status": { $exists: false } }, { "af.status": { $not: /appoint/i } }] },
-        ],
-      },
-    },
-
-    // Freshness sort
-    {
-      $addFields: {
-        sortKey: {
-          $cond: [{ $gt: ["$updatedAt", "$af.createdAt"] }, "$updatedAt", "$af.createdAt"],
-        },
-      },
-    },
-    { $sort: { sortKey: -1 } },
-
     // Final projection
     {
       $project: {
-        _id: 1,
+        _id: 0,
         updatedAt: 1,
         af: 1,
         displayName: 1,
         displayVehicle: 1,
         displayVin: 1,
-        displayMiles: 1,
+        displayMiles: "$af.miles",
         displayRo: 1,
-        dviDone: 1,
-      },
+        dviDone: 1
+      }
     },
+    // Sort newest first
+    { $sort: { updatedAt: -1 } },
+    // Limit to a reasonable count
+    { $limit: 100 }
   ]).toArray();
 
   return (
@@ -497,7 +279,7 @@ export default async function DashboardPage() {
                 const badge = badgeClassFromStatus(statusText);
 
                 return (
-                  <tr key={r._id} className="border-t hover:bg-gray-50">
+                  <tr key={vin} className="border-t hover:bg-gray-50">
                     {/* Manual Close (left X) — dashboard redirect */}
                     <td className="p-3 align-middle">
                       <form
@@ -517,7 +299,7 @@ export default async function DashboardPage() {
                     {/* Name (links to vehicle page) */}
                     <td className="p-3">
                       <a className="text-blue-600 hover:underline" href={VEHICLE_HREF(vin)}>
-                        {r.displayName}
+                        {r.displayName || "—"}
                       </a>
                     </td>
 
@@ -525,7 +307,9 @@ export default async function DashboardPage() {
                     <td className="p-3">{r.displayRo ? <code>{r.displayRo}</code> : "—"}</td>
 
                     {/* Vehicle */}
-                    <td className="p-3">{r.displayVehicle && r.displayVehicle.trim() !== "" ? r.displayVehicle : "-"}</td>
+                    <td className="p-3">
+                      {r.displayVehicle && r.displayVehicle.trim() !== "" ? r.displayVehicle : "—"}
+                    </td>
 
                     {/* VIN */}
                     <td className="p-3">
@@ -551,11 +335,15 @@ export default async function DashboardPage() {
 
                     {/* Miles */}
                     <td className="p-3">
-                      {r.displayMiles != null ? (Number(r.displayMiles).toLocaleString?.() ?? r.displayMiles) : "—"}
+                      {r.displayMiles != null
+                        ? (Number(r.displayMiles).toLocaleString?.() ?? r.displayMiles)
+                        : "—"}
                     </td>
 
                     {/* Updated */}
-                    <td className="p-3">{r.updatedAt ? new Date(r.updatedAt as any).toLocaleString() : "—"}</td>
+                    <td className="p-3">
+                      {r.updatedAt ? new Date(r.updatedAt as any).toLocaleString() : "—"}
+                    </td>
 
                     {/* Inspect / Plan / Recommended */}
                     <td className="p-3">
@@ -606,7 +394,7 @@ export default async function DashboardPage() {
         <p className="text-xs text-gray-500">
           AF Status (and mileage, when available) come from the latest AutoFlow event’s{" "}
           <code>payload.ticket.status</code>/<code>payload.ticket.mileage</code> (with fallbacks to other fields).
-          Miles fall back to RO mileage, then any vehicle odometer fields. “Appointment” items are hidden here until they progress.
+          Miles fall back to other payload odometer fields. “Appointment” items are hidden here until they progress.
         </p>
       </section>
 
