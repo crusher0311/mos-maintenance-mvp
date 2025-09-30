@@ -185,8 +185,13 @@ export default function DashboardClient({ initialData }: { initialData: Dashboar
                           <div>{new Date(r.updatedAt).toLocaleDateString()}</div>
                           <div className="text-gray-500">{new Date(r.updatedAt).toLocaleTimeString()}</div>
                         </div>
+                      ) : r.af?.createdAt ? (
+                        <div className="text-xs">
+                          <div>{new Date(r.af.createdAt).toLocaleDateString()}</div>
+                          <div className="text-gray-500">{new Date(r.af.createdAt).toLocaleTimeString()}</div>
+                        </div>
                       ) : (
-                        <span className="text-gray-400" title={`updatedAt: ${r.updatedAt}, af.createdAt: ${r.af?.createdAt}`}>—</span>
+                        <span className="text-gray-400" title={`Debug: updatedAt=${r.updatedAt}, af.createdAt=${r.af?.createdAt}`}>—</span>
                       )}
                     </td>
 

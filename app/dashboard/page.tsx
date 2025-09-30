@@ -165,18 +165,32 @@ export default async function DashboardPage() {
             ]
           }
         },
-        updatedAt: "$createdAtDate"
+        updatedAt: {
+          $ifNull: [
+            "$createdAtDate",
+            { $ifNull: ["$createdAt", new Date()] }
+          ]
+        }
       }
     },
     // DVI presence using roNumber (if present)
     {
       $lookup: {
         from: "dvi_results",
-        let: { ro: "$displayRo" },
+        let: { ro: { $toString: "$displayRo" } },
         pipeline: [
           {
             $match: {
-              $expr: { $and: [{ $ne: ["$$ro", null] }, { $eq: ["$roNumber", "$$ro"] }] }
+              $expr: { 
+                $and: [
+                  { $ne: ["$$ro", null] }, 
+                  { $ne: ["$$ro", "null"] },
+                  { $or: [
+                    { $eq: ["$roNumber", "$$ro"] },
+                    { $eq: [{ $toString: "$roNumber" }, "$$ro"] }
+                  ]}
+                ] 
+              }
             }
           },
           { $limit: 1 },
@@ -188,11 +202,20 @@ export default async function DashboardPage() {
     {
       $lookup: {
         from: "dvi",
-        let: { ro: "$displayRo" },
+        let: { ro: { $toString: "$displayRo" } },
         pipeline: [
           {
             $match: {
-              $expr: { $and: [{ $ne: ["$$ro", null] }, { $eq: ["$roNumber", "$$ro"] }] }
+              $expr: { 
+                $and: [
+                  { $ne: ["$$ro", null] }, 
+                  { $ne: ["$$ro", "null"] },
+                  { $or: [
+                    { $eq: ["$roNumber", "$$ro"] },
+                    { $eq: [{ $toString: "$roNumber" }, "$$ro"] }
+                  ]}
+                ] 
+              }
             }
           },
           { $limit: 1 },
