@@ -1,7 +1,7 @@
 // app/api/admin/promote-user/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo";
-import { ENV } from "@/lib/env";
+import { ENV } from "@/lib/env-safe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

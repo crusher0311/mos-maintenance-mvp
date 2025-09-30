@@ -4,3 +4,6 @@ export type AnalyzeResult = { summary: string; items: Array<{ title: string; det
 export async function analyzeVin(_input: AnalyzeInput): Promise<AnalyzeResult> {
   return { summary: "Analyzer stub (not enabled in this build).", items: [] };
 }
+
+// Export for compatibility with existing imports
+export const analyzeMaintenance = analyzeVin;
