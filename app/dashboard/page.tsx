@@ -138,11 +138,16 @@ export default async function DashboardPage() {
         displayVin: "$vinNorm",
         displayRo: {
           $ifNull: [
-            "$payload.ticket.roNumber",
+            "$payload.ticket.invoice",
             {
               $ifNull: [
-                "$payload.roNumber", 
-                { $ifNull: ["$roNumber", null] }
+                "$payload.ticket.id", 
+                {
+                  $ifNull: [
+                    "$payload.event.invoice",
+                    { $ifNull: ["$roNumber", null] }
+                  ]
+                }
               ]
             }
           ]
