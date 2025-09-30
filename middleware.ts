@@ -2,7 +2,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getDb } from "@/lib/mongo";
 
-const PUBLIC_PATHS = new Set(["/", "/login", "/forgot", "/reset", "/setup", "/api/auth/login", "/api/auth/forgot", "/api/auth/reset", "/api/auth/complete-setup"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/forgot", "/reset", "/setup", "/api/auth/login", "/api/auth/forgot", "/api/auth/reset", "/api/auth/complete-setup", "/api/auth/setup"]);
 const SESSION_COOKIE = "session_token";
 
 function isPublicPath(pathname: string) {

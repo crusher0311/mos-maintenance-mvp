@@ -100,9 +100,9 @@ export async function POST(req: NextRequest) {
       message: "Setup completed successfully"
     });
     
-    res.cookies.set("sid", sessionId, {
+    res.cookies.set("session_token", sessionId, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: typeof window === 'undefined' && (globalThis as any).process?.env?.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
       expires: expiresAt,
