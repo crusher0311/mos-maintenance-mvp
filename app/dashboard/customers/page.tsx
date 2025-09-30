@@ -82,9 +82,18 @@ export default async function CustomersPage() {
     {
       $lookup: {
         from: "vehicles",
-        let: { cid: "$_id" },
+        let: { cid: "$_id", cidStr: { $toString: "$_id" } },
         pipeline: [
-          { $match: { $expr: { $eq: ["$customerId", "$$cid"] } } },
+          { 
+            $match: { 
+              $expr: { 
+                $or: [
+                  { $eq: ["$customerId", "$$cid"] },
+                  { $eq: ["$customerId", "$$cidStr"] }
+                ]
+              } 
+            } 
+          },
           { $sort: { updatedAt: -1, createdAt: -1 } },
           { $limit: 1 },
           { $project: { year: 1, make: 1, model: 1, vin: 1 } },
@@ -98,9 +107,18 @@ export default async function CustomersPage() {
     {
       $lookup: {
         from: "repair_orders",
-        let: { cid: "$_id" },
+        let: { cid: "$_id", cidStr: { $toString: "$_id" } },
         pipeline: [
-          { $match: { $expr: { $eq: ["$customerId", "$$cid"] } } },
+          { 
+            $match: { 
+              $expr: { 
+                $or: [
+                  { $eq: ["$customerId", "$$cid"] },
+                  { $eq: ["$customerId", "$$cidStr"] }
+                ]
+              } 
+            } 
+          },
           { $sort: { updatedAt: -1, createdAt: -1 } },
           { $limit: 1 },
           { $project: { roNumber: 1, mileage: 1 } },
