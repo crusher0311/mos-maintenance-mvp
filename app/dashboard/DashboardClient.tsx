@@ -186,7 +186,7 @@ export default function DashboardClient({ initialData }: { initialData: Dashboar
                           <div className="text-gray-500">{new Date(r.updatedAt).toLocaleTimeString()}</div>
                         </div>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-gray-400" title={`updatedAt: ${r.updatedAt}, af.createdAt: ${r.af?.createdAt}`}>—</span>
                       )}
                     </td>
 

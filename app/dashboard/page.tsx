@@ -40,19 +40,7 @@ export default async function DashboardPage() {
     // Normalize basic fields we need from events
     {
       $addFields: {
-        createdAtDate: {
-          $cond: [
-            { $eq: [{ $type: "$createdAt" }, "date"] },
-            "$createdAt",
-            {
-              $dateFromString: {
-                dateString: { $toString: "$createdAt" },
-                onError: null,
-                onNull: null
-              }
-            }
-          ]
-        },
+        createdAtDate: "$createdAt",
         statusRaw: {
           $ifNull: [
             "$payload.ticket.status",
