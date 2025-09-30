@@ -83,11 +83,6 @@ export function DashboardLayout({ children, title = "Dashboard", userRole = 'use
       return [
         ...commonItems,
         {
-          name: "Customers",
-          href: "/dashboard/customers",
-          icon: NavigationIcons.Users
-        },
-        {
           name: "Settings",
           href: "/dashboard/settings",
           icon: NavigationIcons.Settings

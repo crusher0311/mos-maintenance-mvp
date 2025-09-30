@@ -118,7 +118,7 @@ async function handle(req: NextRequest, ctx: { params: { vin: string } }) {
     if (req.method === "POST") {
       const { origin } = new URL(req.url);
       const dest =
-        `${origin}/dashboard/customers/` +
+        `${origin}/dashboard?vin=` +
         `${encodeURIComponent(customerId)}/vehicles/${encodeURIComponent(vin)}?refreshed=1`;
 
       return NextResponse.redirect(dest, { status: 303 });

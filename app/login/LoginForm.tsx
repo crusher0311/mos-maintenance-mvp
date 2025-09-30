@@ -13,7 +13,7 @@ export default function LoginForm() {
 
   const router = useRouter();
   const search = useSearchParams();
-  const next = search.get("next") || "/dashboard/customers";
+  const next = search.get("next") || "/dashboard";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,7 +46,7 @@ export default function LoginForm() {
         throw new Error(err);
       }
 
-      const dest = (data && data.redirect) || next || "/dashboard/customers";
+      const dest = (data && data.redirect) || next || "/dashboard";
       router.replace(dest);
     } catch (err: any) {
       setMsg("âŒ " + (err?.message || "Login failed"));
