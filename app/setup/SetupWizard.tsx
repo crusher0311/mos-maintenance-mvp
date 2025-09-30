@@ -54,7 +54,7 @@ export default function SetupWizard() {
     setError("");
 
     try {
-      const response = await fetch("/api/auth/complete-setup", {
+      const response = await fetch("/api/auth/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
