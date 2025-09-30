@@ -1,0 +1,80 @@
+# Node / package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Next.js / build artifacts
+.next/
+out/
+dist/
+.turbo/
+.vercel/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Tests / coverage / caches
+coverage/
+.tmp/
+temp/
+.cache/
+
+# Env files (keep example only)
+.env
+.env.*
+!.env.example
+
+# Misc
+*.log
+.vercel
+
+/generated/prisma
+# dependencies & build
+node_modules/
+.next/
+out/
+dist/
+
+# local data
+prisma/dev.db
+prisma/dev.db-journal
+*.db
+*.db-journal
+
+# env & logs
+.env
+.env.*
+!.env.example
+*.log
+ngrok.log
+
+# misc
+.DS_Store
+# ---- local data (do NOT commit) ----
+.dataone_work/
+DataOne_US_LDV_Data.zip
+`r`n.dataone_work/
+.env*.local
+node_modules/
+.next/
+.env*
+.vercel/
+*.log
+# DataOne bulk data (keep local only)
+.dataone/*
+!.dataone/README.md
+
+# Env & Vercel
+.env*
+.vercel/
+
+# Node/Next/OS artifacts
+node_modules/
+.next/
+*.log
+.DS_Store
