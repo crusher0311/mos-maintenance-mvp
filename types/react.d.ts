@@ -10,6 +10,7 @@ declare module 'react' {
   
   export function useState<S>(initialState: S | (() => S)): [S, (value: S | ((prevState: S) => S)) => void];
   export function useEffect(effect: () => void | (() => void), deps?: any[]): void;
+  export function useMemo<T>(factory: () => T, deps: any[]): T;
   
   export interface RefAttributes<T> {
     ref?: Ref<T>;

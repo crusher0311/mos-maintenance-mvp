@@ -2,11 +2,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronDown, ChevronUp, Clipboard, Printer, Share2 } from "lucide-react";
+import { Badge } from "@/components/ui";
+import { Button } from "@/components/ui";
+// import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+// import { ChevronDown, ChevronUp, Clipboard, Printer, Share2 } from "lucide-react";
 
 type TriagedItem = {
   key: string;

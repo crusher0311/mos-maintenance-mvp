@@ -1,5 +1,5 @@
 // components/ui/index.ts
-export { default as Button } from "./button";
+export { default as Button } from "./Button";
 export { Badge } from "./Badge";
 export { Card, CardHeader, CardTitle, CardContent } from "./Card";
 export { Input, Textarea, Select } from "./Input";
