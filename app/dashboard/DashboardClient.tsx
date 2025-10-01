@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 type DashboardData = {
   rows: any[];
@@ -12,7 +11,6 @@ export default function DashboardClient({ initialData }: { initialData: Dashboar
   const [data, setData] = useState(initialData);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const router = useRouter();
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
