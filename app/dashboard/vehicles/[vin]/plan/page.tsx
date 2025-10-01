@@ -9,6 +9,7 @@ import {
   resolveCarfaxConfig, 
   fetchCarfaxWithCache 
 } from "@/lib/integrations/carfax";
+import PlanUI from "./PlanUI-modern";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -448,280 +449,28 @@ export default async function VehiclePlanPage({ params }: PageProps) {
     upcoming: buckets.upcoming.length,
   };
 
+  // Pass data to the modern UI component
+  const vehicleInfo = {
+    year: vehicle?.year || null,
+    make: vehicle?.make || null,
+    model: vehicle?.model || null,
+    vin,
+    currentMiles,
+    mpdBlended,
+  };
+
   return (
-    <main className="mx-auto max-w-5xl p-0 sm:p-6 space-y-8">
-      {/* Sticky summary header */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm text-neutral-600">
-              <Link href={`/dashboard/vehicles/${vin}`} className="underline">
-                ← Back
-              </Link>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-bold truncate">
-              {(vehicle ? [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") : "Vehicle")} — Plan
-            </h1>
-            <div className="text-sm text-neutral-600">
-              VIN <code>{vin}</code>
-              {currentMiles != null && currentMiles > 0 && <> • Current: {fmtMiles(currentMiles)} mi</>}
-              {mpdBlended != null && <> • ~{mpdBlended.toFixed(1)} mi/day</>}
-            </div>
-          </div>
-
-          <nav className="flex items-center gap-2 text-xs sm:text-sm">
-            <a href="#overdue" className="rounded-full px-3 py-1 bg-red-600 text-white">
-              Overdue {counts.overdue}
-            </a>
-            <a href="#soon" className="rounded-full px-3 py-1 bg-amber-600 text-white">
-              Due Soon {counts.soon}
-            </a>
-            <a href="#upcoming" className="rounded-full px-3 py-1 bg-emerald-600 text-white">
-              Upcoming {counts.upcoming}
-            </a>
-          </nav>
-        </div>
-      </div>
-
-      {/* Buckets (single column for easy scanning) */}
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 space-y-8">
-        {/* Overdue */}
-        <section id="overdue" className="space-y-3">
-          <h2 className="text-lg font-semibold text-red-700 flex items-center gap-2">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" /> Overdue ({counts.overdue})
-          </h2>
-          {buckets.overdue.length === 0 ? (
-            <div className="text-sm text-neutral-500">Nothing overdue 🎉</div>
-          ) : (
-            <ul className="space-y-3">
-              {buckets.overdue.map((t) => (
-                <li key={t.key} className="rounded-xl border p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-medium">{t.title}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-600">
-                        {t.category && <span className="rounded-full bg-neutral-100 px-2 py-0.5">{t.category}</span>}
-                        <span className="rounded-full bg-red-600 text-white px-2 py-0.5">OVERDUE</span>
-                        {(t.intervalMiles || t.intervalMonths) && (
-                          <span className="rounded-full border px-2 py-0.5">
-                            OEM: {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : ""}
-                            {t.intervalMiles && t.intervalMonths ? " / " : ""}
-                            {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
-                          </span>
-                        )}
-                        {t.bump === "red" && <span className="rounded-full bg-red-600 text-white px-2 py-0.5">DVI 🔴</span>}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-sm mt-2">
-                    {t.dueAtMiles != null && (
-                      <>
-                        Due at <strong>{fmtMiles(t.dueAtMiles)}</strong> mi
-                        {t.milesToGo != null && ` • ${fmtMiles(Math.abs(t.milesToGo))} mi overdue`}
-                      </>
-                    )}
-                    {t.dueAtMiles != null && t.dueAtDate != null && <> • </>}
-                    {t.dueAtDate != null && (
-                      <>
-                        By <strong>{t.dueAtDate.toLocaleDateString()}</strong>
-                      </>
-                    )}
-                  </div>
-
-                  {t.last?.miles != null && (
-                    <div className="text-xs text-neutral-600 mt-1">
-                      Last done at {fmtMiles(t.last.miles)} mi
-                      {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
-                    </div>
-                  )}
-
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs underline">Why this is recommended</summary>
-                    <div className="mt-2 rounded-lg bg-neutral-50 p-2 text-xs text-neutral-700 space-y-1">
-                      <div>
-                        <span className="font-medium">OEM Interval:</span>{" "}
-                        {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : "—"}
-                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
-                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
-                      </div>
-                      <div>
-                        <span className="font-medium">Last done (CARFAX):</span>{" "}
-                        {t.last?.miles != null ? `${fmtMiles(t.last.miles)} mi` : "—"}
-                        {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
-                      </div>
-                      <div>
-                        <span className="font-medium">Next due:</span>{" "}
-                        {t.dueAtMiles != null ? `${fmtMiles(t.dueAtMiles)} mi` : "—"}
-                        {t.dueAtDate ? ` or ${t.dueAtDate.toLocaleDateString()}` : ""}
-                      </div>
-                      {t.bump && (
-                        <div>
-                          <span className="font-medium">DVI:</span> {t.bump === "red" ? "🔴 flagged" : "🟡 caution"}
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Due Soon */}
-        <section id="soon" className="space-y-3">
-          <h2 className="text-lg font-semibold text-amber-700 flex items-center gap-2">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" /> Due Soon ({counts.soon})
-          </h2>
-          {buckets.dueSoon.length === 0 ? (
-            <div className="text-sm text-neutral-500">Nothing due soon.</div>
-          ) : (
-            <ul className="space-y-3">
-              {buckets.dueSoon.map((t) => (
-                <li key={t.key} className="rounded-xl border p-3">
-                  <div className="font-medium">{t.title}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-600">
-                    {t.category && <span className="rounded-full bg-neutral-100 px-2 py-0.5">{t.category}</span>}
-                    <span className="rounded-full bg-amber-600 text-white px-2 py-0.5">DUE SOON</span>
-                    {(t.intervalMiles || t.intervalMonths) && (
-                      <span className="rounded-full border px-2 py-0.5">
-                        OEM: {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : ""}
-                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
-                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
-                      </span>
-                    )}
-                    {t.bump === "yellow" && (
-                      <span className="rounded-full bg-amber-600 text-white px-2 py-0.5">DVI 🟡</span>
-                    )}
-                  </div>
-
-                  <div className="text-sm mt-2">
-                    {t.milesToGo != null && t.milesToGo > 0 && (
-                      <>
-                        In ~<strong>{fmtMiles(t.milesToGo)}</strong> mi
-                      </>
-                    )}
-                    {t.milesToGo != null && t.daysToGo != null && <> • </>}
-                    {t.daysToGo != null && t.daysToGo > 0 && (
-                      <>
-                        In ~<strong>{t.daysToGo}</strong> days
-                      </>
-                    )}
-                  </div>
-
-                  {t.last?.miles != null && (
-                    <div className="text-xs text-neutral-600 mt-1">
-                      Last done at {fmtMiles(t.last.miles)} mi
-                      {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
-                    </div>
-                  )}
-
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs underline">Why this is recommended</summary>
-                    <div className="mt-2 rounded-lg bg-neutral-50 p-2 text-xs text-neutral-700 space-y-1">
-                      <div>
-                        <span className="font-medium">OEM Interval:</span>{" "}
-                        {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : "—"}
-                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
-                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
-                      </div>
-                      <div>
-                        <span className="font-medium">Last done (CARFAX):</span>{" "}
-                        {t.last?.miles != null ? `${fmtMiles(t.last.miles)} mi` : "—"}
-                        {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
-                      </div>
-                      <div>
-                        <span className="font-medium">Next due:</span>{" "}
-                        {t.dueAtMiles != null ? `${fmtMiles(t.dueAtMiles)} mi` : "—"}
-                        {t.dueAtDate ? ` or ${t.dueAtDate.toLocaleDateString()}` : ""}
-                      </div>
-                    </div>
-                  </details>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Upcoming */}
-        <section id="upcoming" className="space-y-3">
-          <h2 className="text-lg font-semibold text-emerald-700 flex items-center gap-2">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-600" /> Upcoming ({counts.upcoming})
-          </h2>
-          {buckets.upcoming.length === 0 ? (
-            <div className="text-sm text-neutral-500">No upcoming items.</div>
-          ) : (
-            <ul className="space-y-3">
-              {buckets.upcoming.map((t) => (
-                <li key={t.key} className="rounded-xl border p-3">
-                  <div className="font-medium">{t.title}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-600">
-                    {t.category && <span className="rounded-full bg-neutral-100 px-2 py-0.5">{t.category}</span>}
-                    <span className="rounded-full bg-emerald-600 text-white px-2 py-0.5">UPCOMING</span>
-                    {(t.intervalMiles || t.intervalMonths) && (
-                      <span className="rounded-full border px-2 py-0.5">
-                        OEM: {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : ""}
-                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
-                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="text-sm mt-2">
-                    {t.dueAtMiles != null && (
-                      <>
-                        Next at ~<strong>{fmtMiles(t.dueAtMiles)}</strong> mi
-                      </>
-                    )}
-                    {t.dueAtMiles != null && t.dueAtDate != null && <> • </>}
-                    {t.dueAtDate != null && (
-                      <>
-                        or ~<strong>{t.dueAtDate.toLocaleDateString()}</strong>
-                      </>
-                    )}
-                  </div>
-
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs underline">Show details</summary>
-                    <div className="mt-2 rounded-lg bg-neutral-50 p-2 text-xs text-neutral-700 space-y-1">
-                      <div>
-                        <span className="font-medium">OEM Interval:</span>{" "}
-                        {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : "—"}
-                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
-                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
-                      </div>
-                      {t.last?.miles != null && (
-                        <div>
-                          <span className="font-medium">Last done (CARFAX):</span>{" "}
-                          {fmtMiles(t.last.miles)} mi{t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Debug */}
-        <details className="mt-6">
-          <summary className="cursor-pointer">Debug (inputs)</summary>
-          <pre className="mt-2 text-xs bg-gray-50 p-3 rounded overflow-auto max-h-72">
-            {JSON.stringify(
-              {
-                currentMiles,
-                mpdBlended,
-                carfaxOk: (carfax as any).ok ?? false,
-                dviOk: (dvi as any).ok ?? false,
-                oemCount: oemItems.length,
-              },
-              null,
-              2
-            )}
-          </pre>
-        </details>
-      </div>
-    </main>
+    <PlanUI 
+      buckets={buckets} 
+      counts={counts} 
+      vehicleInfo={vehicleInfo}
+      debugData={{
+        currentMiles,
+        mpdBlended,
+        carfaxOk: (carfax as any).ok ?? false,
+        dviOk: (dvi as any).ok ?? false,
+        oemCount: oemItems.length,
+      }}
+    />
   );
 }

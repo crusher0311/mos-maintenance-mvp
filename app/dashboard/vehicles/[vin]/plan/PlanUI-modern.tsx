@@ -2,9 +2,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui";
-import { Button } from "@/components/ui";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import { Badge } from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import Link from "next/link";
 
 type TriagedItem = {
   key: string;
@@ -124,23 +125,19 @@ function ServiceCard({ t, severity }: { t: TriagedItem; severity: "overdue" | "s
 
           {/* Action Buttons */}
           <div className="flex flex-col gap-2 ml-4">
-            <Button
-              variant="primary"
-              size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md transition-all"
+            <button
+              className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md transition-all rounded-md font-medium"
               title="Add to repair order"
             >
               + Add to RO
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
+            </button>
+            <button
+              className="px-3 py-1.5 text-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 rounded-md font-medium"
               onClick={() => navigator.clipboard.writeText(lineForClipboard)}
               title="Copy service details"
-              className="border-gray-300 hover:border-gray-400 text-gray-700 hover:text-gray-900"
             >
               📋 Copy
-            </Button>
+            </button>
           </div>
         </div>
       </CardHeader>
@@ -199,25 +196,32 @@ function ServiceCard({ t, severity }: { t: TriagedItem; severity: "overdue" | "s
   );
 }
 
-export function PlanUI({
-  vin,
-  currentMiles,
-  mpdBlended,
+export default function PlanUI({
   buckets,
+  counts,
+  vehicleInfo,
+  debugData,
 }: {
-  vin: string;
-  currentMiles: number | null;
-  mpdBlended: number | null;
   buckets: { overdue: TriagedItem[]; dueSoon: TriagedItem[]; upcoming: TriagedItem[] };
+  counts: { overdue: number; soon: number; upcoming: number };
+  vehicleInfo: {
+    year?: number | null;
+    make?: string | null;
+    model?: string | null;
+    vin: string;
+    currentMiles: number | null;
+    mpdBlended: number | null;
+  };
+  debugData?: any;
 }) {
   const [activeView, setActiveView] = useState<"all" | "overdue" | "soon" | "upcoming">("all");
   const [viewMode, setViewMode] = useState<"advisor" | "customer">("advisor");
 
-  const counts = {
-    o: buckets.overdue.length,
-    s: buckets.dueSoon.length,
-    u: buckets.upcoming.length,
-    total: buckets.overdue.length + buckets.dueSoon.length + buckets.upcoming.length
+  const totalCounts = {
+    o: counts.overdue,
+    s: counts.soon,
+    u: counts.upcoming,
+    total: counts.overdue + counts.soon + counts.upcoming
   };
 
   const allItems = useMemo(() => [
@@ -235,6 +239,10 @@ export function PlanUI({
     }
   }, [activeView, allItems, buckets]);
 
+  const vehicleDisplayName = [vehicleInfo.year, vehicleInfo.make, vehicleInfo.model]
+    .filter(Boolean)
+    .join(" ") || "Vehicle";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
       {/* Modern Header */}
@@ -248,34 +256,34 @@ export function PlanUI({
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">
-                  Maintenance Plan
+                  {vehicleDisplayName} — Maintenance Plan
                 </h1>
                 <div className="flex items-center gap-4 text-sm text-gray-600">
-                  <span className="font-medium">VIN: {vin}</span>
-                  {currentMiles != null && <span>Current: <span className="font-semibold">{fmtMiles(currentMiles)} mi</span></span>}
-                  {mpdBlended != null && <span>Avg: <span className="font-semibold">{mpdBlended.toFixed(1)} mi/day</span></span>}
+                  <span className="font-medium">VIN: {vehicleInfo.vin}</span>
+                  {vehicleInfo.currentMiles != null && (
+                    <span>Current: <span className="font-semibold">{fmtMiles(vehicleInfo.currentMiles)} mi</span></span>
+                  )}
+                  {vehicleInfo.mpdBlended != null && (
+                    <span>Avg: <span className="font-semibold">{vehicleInfo.mpdBlended.toFixed(1)} mi/day</span></span>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Action Buttons */}
             <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => window.print()}
-                className="bg-white hover:bg-gray-50"
+                className="px-3 py-1.5 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md font-medium"
               >
                 🖨️ Print Plan
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
+              </button>
+              <button
                 title="Share maintenance plan"
-                className="bg-white hover:bg-gray-50"
+                className="px-3 py-1.5 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md font-medium"
               >
                 📤 Share
-              </Button>
+              </button>
               
               {/* View Mode Toggle */}
               <div className="flex bg-gray-100 rounded-lg p-1">
@@ -306,19 +314,19 @@ export function PlanUI({
           {/* Summary Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
             <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{counts.o}</div>
+              <div className="text-2xl font-bold">{totalCounts.o}</div>
               <div className="text-red-100">Overdue Items</div>
             </div>
             <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{counts.s}</div>
+              <div className="text-2xl font-bold">{totalCounts.s}</div>
               <div className="text-amber-100">Due Soon</div>
             </div>
             <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{counts.u}</div>
+              <div className="text-2xl font-bold">{totalCounts.u}</div>
               <div className="text-blue-100">Upcoming</div>
             </div>
             <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{counts.total}</div>
+              <div className="text-2xl font-bold">{totalCounts.total}</div>
               <div className="text-green-100">Total Services</div>
             </div>
           </div>
@@ -329,10 +337,10 @@ export function PlanUI({
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="flex flex-wrap gap-2 mb-6">
           {[
-            { key: "all", label: `All Services (${counts.total})`, color: "bg-gray-600" },
-            { key: "overdue", label: `Overdue (${counts.o})`, color: "bg-red-600" },
-            { key: "soon", label: `Due Soon (${counts.s})`, color: "bg-amber-600" },
-            { key: "upcoming", label: `Upcoming (${counts.u})`, color: "bg-blue-600" }
+            { key: "all", label: `All Services (${totalCounts.total})`, color: "bg-gray-600" },
+            { key: "overdue", label: `Overdue (${totalCounts.o})`, color: "bg-red-600" },
+            { key: "soon", label: `Due Soon (${totalCounts.s})`, color: "bg-amber-600" },
+            { key: "upcoming", label: `Upcoming (${totalCounts.u})`, color: "bg-blue-600" }
           ].map(({ key, label, color }) => (
             <button
               key={key}
@@ -361,7 +369,7 @@ export function PlanUI({
           ) : (
             <>
               {/* AI Insight Banner */}
-              {activeView === "all" && counts.total > 0 && (
+              {activeView === "all" && totalCounts.total > 0 && (
                 <div className="bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl p-6 text-white mb-6">
                   <div className="flex items-start gap-4">
                     <div className="text-3xl">🤖</div>
@@ -370,7 +378,7 @@ export function PlanUI({
                       <p className="text-purple-100 text-sm">
                         Our AI has analyzed this vehicle's service history, mileage patterns, and manufacturer 
                         specifications to prioritize the most critical maintenance items. 
-                        {counts.o > 0 && ` ${counts.o} items are overdue and should be addressed immediately.`}
+                        {totalCounts.o > 0 && ` ${totalCounts.o} items are overdue and should be addressed immediately.`}
                       </p>
                     </div>
                   </div>
@@ -387,6 +395,20 @@ export function PlanUI({
             </>
           )}
         </div>
+
+        {/* Debug Panel (only in advisor view) */}
+        {viewMode === "advisor" && debugData && (
+          <details className="mt-8 bg-white rounded-lg border border-gray-200">
+            <summary className="cursor-pointer p-4 font-medium text-gray-700 hover:bg-gray-50 rounded-lg">
+              Debug Information (Advisor Only)
+            </summary>
+            <div className="p-4 border-t border-gray-200">
+              <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto max-h-72 text-gray-700">
+                {JSON.stringify(debugData, null, 2)}
+              </pre>
+            </div>
+          </details>
+        )}
       </div>
     </div>
   );
