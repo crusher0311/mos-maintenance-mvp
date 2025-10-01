@@ -9,7 +9,6 @@ import {
   resolveCarfaxConfig, 
   fetchCarfaxWithCache 
 } from "@/lib/integrations/carfax";
-import ModernPlanUI from "./ModernPlanUI";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,12 +49,6 @@ function toSquish(vin: string) {
 async function getLocalOeFromMongo(vin: string) {
   const db = await getDb();
   const SQUISH = toSquish(vin);
-
-  console.log(`DEBUG: Looking for VIN ${vin}, SQUISH: ${SQUISH}`);
-
-  // First check if any records exist for this squish
-  const count = await db.collection("dataone_us_ldv_ddl").countDocuments({ squish: SQUISH });
-  console.log(`DEBUG: Found ${count} records for squish ${SQUISH}`);
 
   const pipeline = [
     { $match: { squish: SQUISH } },
@@ -141,11 +134,9 @@ async function getLocalOeFromMongo(vin: string) {
   ];
 
   const items = await db
-    .collection("dataone_us_ldv_ddl")
-    .aggregate(pipeline, { allowDiskUse: true })
+    .collection("dataone_lkp_vin_maintenance")
+    .aggregate(pipeline, { allowDiskUse: true, hint: "squish_1" })
     .toArray();
-
-  console.log(`DEBUG: Pipeline returned ${items.length} items`);
 
   return { ok: true as const, vin, squish: SQUISH, count: items.length, items };
 }
@@ -457,143 +448,280 @@ export default async function VehiclePlanPage({ params }: PageProps) {
     upcoming: buckets.upcoming.length,
   };
 
-  // Pass data to the modern UI component
-  const vehicleInfo = {
-    year: vehicle?.year || null,
-    make: vehicle?.make || null,
-    model: vehicle?.model || null,
-    vin,
-    currentMiles,
-    mpdBlended,
-  };
-
-  const vehicleDisplayName = [vehicleInfo.year, vehicleInfo.make, vehicleInfo.model]
-    .filter(Boolean)
-    .join(" ") || "Vehicle";
-
-  const totalCounts = {
-    o: counts.overdue,
-    s: counts.soon,
-    u: counts.upcoming,
-    total: counts.overdue + counts.soon + counts.upcoming
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      {/* Modern Header */}
-      <div className="bg-white/90 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                🚗 {vehicleDisplayName} — Maintenance Plan
-              </h1>
-              <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
-                <span>VIN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{vehicleInfo.vin}</code></span>
-                {vehicleInfo.currentMiles && (
-                  <span>Current: <strong>{fmtMiles(vehicleInfo.currentMiles)} mi</strong></span>
-                )}
-                {vehicleInfo.mpdBlended && (
-                  <span>Avg: <strong>{vehicleInfo.mpdBlended.toFixed(1)} mi/day</strong></span>
-                )}
-              </div>
+    <main className="mx-auto max-w-5xl p-0 sm:p-6 space-y-8">
+      {/* Sticky summary header */}
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
+        <div className="mx-auto max-w-5xl px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm text-neutral-600">
+              <Link href={`/dashboard/vehicles/${vin}`} className="underline">
+                ← Back
+              </Link>
             </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-3">
-              <button
-                className="px-3 py-1.5 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md font-medium"
-              >
-                🖨️ Print Plan
-              </button>
-              <button
-                title="Share maintenance plan"
-                className="px-3 py-1.5 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md font-medium"
-              >
-                📤 Share
-              </button>
+            <h1 className="text-xl sm:text-2xl font-bold truncate">
+              {(vehicle ? [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") : "Vehicle")} — Plan
+            </h1>
+            <div className="text-sm text-neutral-600">
+              VIN <code>{vin}</code>
+              {currentMiles != null && currentMiles > 0 && <> • Current: {fmtMiles(currentMiles)} mi</>}
+              {mpdBlended != null && <> • ~{mpdBlended.toFixed(1)} mi/day</>}
             </div>
           </div>
 
-          {/* Summary Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-            <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{totalCounts.o}</div>
-              <div className="text-red-100">Overdue Items</div>
-            </div>
-            <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{totalCounts.s}</div>
-              <div className="text-amber-100">Due Soon</div>
-            </div>
-            <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{totalCounts.u}</div>
-              <div className="text-blue-100">Upcoming</div>
-            </div>
-            <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-lg p-4 text-white">
-              <div className="text-2xl font-bold">{totalCounts.total}</div>
-              <div className="text-green-100">Total Services</div>
-            </div>
-          </div>
+          <nav className="flex items-center gap-2 text-xs sm:text-sm">
+            <a href="#overdue" className="rounded-full px-3 py-1 bg-red-600 text-white">
+              Overdue {counts.overdue}
+            </a>
+            <a href="#soon" className="rounded-full px-3 py-1 bg-amber-600 text-white">
+              Due Soon {counts.soon}
+            </a>
+            <a href="#upcoming" className="rounded-full px-3 py-1 bg-emerald-600 text-white">
+              Upcoming {counts.upcoming}
+            </a>
+          </nav>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        {totalCounts.total === 0 ? (
-          <div className="text-center py-12">
-            <div className="text-6xl mb-4">🎉</div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">All Caught Up!</h3>
-            <p className="text-gray-600">No maintenance items found.</p>
-            <div className="mt-4 text-sm text-gray-500">
-              OEM Count: {oemItems.length}, CarFax: {(carfax as any).ok ? '✅' : '❌'}, DVI: {(dvi as any).ok ? '✅' : '❌'}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* AI Insight Banner */}
-            <div className="bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl p-6 text-white">
-              <div className="flex items-start gap-4">
-                <div className="text-3xl">🤖</div>
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">AI-Powered Recommendations</h3>
-                  <p className="text-purple-100 text-sm">
-                    Our AI has analyzed this vehicle's service history, mileage patterns, and manufacturer 
-                    specifications to prioritize the most critical maintenance items.
-                    {totalCounts.o > 0 && ` ${totalCounts.o} items are overdue and should be addressed immediately.`}
-                  </p>
-                </div>
-              </div>
-            </div>
+      {/* Buckets (single column for easy scanning) */}
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 space-y-8">
+        {/* Overdue */}
+        <section id="overdue" className="space-y-3">
+          <h2 className="text-lg font-semibold text-red-700 flex items-center gap-2">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" /> Overdue ({counts.overdue})
+          </h2>
+          {buckets.overdue.length === 0 ? (
+            <div className="text-sm text-neutral-500">Nothing overdue 🎉</div>
+          ) : (
+            <ul className="space-y-3">
+              {buckets.overdue.map((t) => (
+                <li key={t.key} className="rounded-xl border p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium">{t.title}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-600">
+                        {t.category && <span className="rounded-full bg-neutral-100 px-2 py-0.5">{t.category}</span>}
+                        <span className="rounded-full bg-red-600 text-white px-2 py-0.5">OVERDUE</span>
+                        {(t.intervalMiles || t.intervalMonths) && (
+                          <span className="rounded-full border px-2 py-0.5">
+                            OEM: {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : ""}
+                            {t.intervalMiles && t.intervalMonths ? " / " : ""}
+                            {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
+                          </span>
+                        )}
+                        {t.bump === "red" && <span className="rounded-full bg-red-600 text-white px-2 py-0.5">DVI 🔴</span>}
+                      </div>
+                    </div>
+                  </div>
 
-            {/* Service Items Placeholder */}
-            <div className="text-center py-8 bg-white rounded-lg border-2 border-dashed border-gray-300">
-              <div className="text-4xl mb-4">�</div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Service Items Loading...</h3>
-              <p className="text-gray-600">Found {totalCounts.total} maintenance items to display.</p>
-            </div>
-          </div>
-        )}
+                  <div className="text-sm mt-2">
+                    {t.dueAtMiles != null && (
+                      <>
+                        Due at <strong>{fmtMiles(t.dueAtMiles)}</strong> mi
+                        {t.milesToGo != null && ` • ${fmtMiles(Math.abs(t.milesToGo))} mi overdue`}
+                      </>
+                    )}
+                    {t.dueAtMiles != null && t.dueAtDate != null && <> • </>}
+                    {t.dueAtDate != null && (
+                      <>
+                        By <strong>{t.dueAtDate.toLocaleDateString()}</strong>
+                      </>
+                    )}
+                  </div>
 
-        {/* Debug Panel */}
-        <details className="mt-8 bg-white rounded-lg border border-gray-200">
-          <summary className="cursor-pointer p-4 font-medium text-gray-700 hover:bg-gray-50 rounded-lg">
-            Debug Information (Advisor Only)
-          </summary>
-          <div className="p-4 border-t border-gray-200">
-            <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto max-h-72 text-gray-700">
-              {JSON.stringify({
+                  {t.last?.miles != null && (
+                    <div className="text-xs text-neutral-600 mt-1">
+                      Last done at {fmtMiles(t.last.miles)} mi
+                      {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
+                    </div>
+                  )}
+
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs underline">Why this is recommended</summary>
+                    <div className="mt-2 rounded-lg bg-neutral-50 p-2 text-xs text-neutral-700 space-y-1">
+                      <div>
+                        <span className="font-medium">OEM Interval:</span>{" "}
+                        {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : "—"}
+                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
+                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
+                      </div>
+                      <div>
+                        <span className="font-medium">Last done (CARFAX):</span>{" "}
+                        {t.last?.miles != null ? `${fmtMiles(t.last.miles)} mi` : "—"}
+                        {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
+                      </div>
+                      <div>
+                        <span className="font-medium">Next due:</span>{" "}
+                        {t.dueAtMiles != null ? `${fmtMiles(t.dueAtMiles)} mi` : "—"}
+                        {t.dueAtDate ? ` or ${t.dueAtDate.toLocaleDateString()}` : ""}
+                      </div>
+                      {t.bump && (
+                        <div>
+                          <span className="font-medium">DVI:</span> {t.bump === "red" ? "🔴 flagged" : "🟡 caution"}
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Due Soon */}
+        <section id="soon" className="space-y-3">
+          <h2 className="text-lg font-semibold text-amber-700 flex items-center gap-2">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" /> Due Soon ({counts.soon})
+          </h2>
+          {buckets.dueSoon.length === 0 ? (
+            <div className="text-sm text-neutral-500">Nothing due soon.</div>
+          ) : (
+            <ul className="space-y-3">
+              {buckets.dueSoon.map((t) => (
+                <li key={t.key} className="rounded-xl border p-3">
+                  <div className="font-medium">{t.title}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-600">
+                    {t.category && <span className="rounded-full bg-neutral-100 px-2 py-0.5">{t.category}</span>}
+                    <span className="rounded-full bg-amber-600 text-white px-2 py-0.5">DUE SOON</span>
+                    {(t.intervalMiles || t.intervalMonths) && (
+                      <span className="rounded-full border px-2 py-0.5">
+                        OEM: {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : ""}
+                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
+                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
+                      </span>
+                    )}
+                    {t.bump === "yellow" && (
+                      <span className="rounded-full bg-amber-600 text-white px-2 py-0.5">DVI 🟡</span>
+                    )}
+                  </div>
+
+                  <div className="text-sm mt-2">
+                    {t.milesToGo != null && t.milesToGo > 0 && (
+                      <>
+                        In ~<strong>{fmtMiles(t.milesToGo)}</strong> mi
+                      </>
+                    )}
+                    {t.milesToGo != null && t.daysToGo != null && <> • </>}
+                    {t.daysToGo != null && t.daysToGo > 0 && (
+                      <>
+                        In ~<strong>{t.daysToGo}</strong> days
+                      </>
+                    )}
+                  </div>
+
+                  {t.last?.miles != null && (
+                    <div className="text-xs text-neutral-600 mt-1">
+                      Last done at {fmtMiles(t.last.miles)} mi
+                      {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
+                    </div>
+                  )}
+
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs underline">Why this is recommended</summary>
+                    <div className="mt-2 rounded-lg bg-neutral-50 p-2 text-xs text-neutral-700 space-y-1">
+                      <div>
+                        <span className="font-medium">OEM Interval:</span>{" "}
+                        {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : "—"}
+                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
+                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
+                      </div>
+                      <div>
+                        <span className="font-medium">Last done (CARFAX):</span>{" "}
+                        {t.last?.miles != null ? `${fmtMiles(t.last.miles)} mi` : "—"}
+                        {t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
+                      </div>
+                      <div>
+                        <span className="font-medium">Next due:</span>{" "}
+                        {t.dueAtMiles != null ? `${fmtMiles(t.dueAtMiles)} mi` : "—"}
+                        {t.dueAtDate ? ` or ${t.dueAtDate.toLocaleDateString()}` : ""}
+                      </div>
+                    </div>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Upcoming */}
+        <section id="upcoming" className="space-y-3">
+          <h2 className="text-lg font-semibold text-emerald-700 flex items-center gap-2">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-600" /> Upcoming ({counts.upcoming})
+          </h2>
+          {buckets.upcoming.length === 0 ? (
+            <div className="text-sm text-neutral-500">No upcoming items.</div>
+          ) : (
+            <ul className="space-y-3">
+              {buckets.upcoming.map((t) => (
+                <li key={t.key} className="rounded-xl border p-3">
+                  <div className="font-medium">{t.title}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-neutral-600">
+                    {t.category && <span className="rounded-full bg-neutral-100 px-2 py-0.5">{t.category}</span>}
+                    <span className="rounded-full bg-emerald-600 text-white px-2 py-0.5">UPCOMING</span>
+                    {(t.intervalMiles || t.intervalMonths) && (
+                      <span className="rounded-full border px-2 py-0.5">
+                        OEM: {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : ""}
+                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
+                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-sm mt-2">
+                    {t.dueAtMiles != null && (
+                      <>
+                        Next at ~<strong>{fmtMiles(t.dueAtMiles)}</strong> mi
+                      </>
+                    )}
+                    {t.dueAtMiles != null && t.dueAtDate != null && <> • </>}
+                    {t.dueAtDate != null && (
+                      <>
+                        or ~<strong>{t.dueAtDate.toLocaleDateString()}</strong>
+                      </>
+                    )}
+                  </div>
+
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs underline">Show details</summary>
+                    <div className="mt-2 rounded-lg bg-neutral-50 p-2 text-xs text-neutral-700 space-y-1">
+                      <div>
+                        <span className="font-medium">OEM Interval:</span>{" "}
+                        {t.intervalMiles ? `${fmtMiles(t.intervalMiles)} mi` : "—"}
+                        {t.intervalMiles && t.intervalMonths ? " / " : ""}
+                        {t.intervalMonths ? `${t.intervalMonths} mo` : ""}
+                      </div>
+                      {t.last?.miles != null && (
+                        <div>
+                          <span className="font-medium">Last done (CARFAX):</span>{" "}
+                          {fmtMiles(t.last.miles)} mi{t.last?.date ? ` on ${t.last.date.toLocaleDateString()}` : ""}
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Debug */}
+        <details className="mt-6">
+          <summary className="cursor-pointer">Debug (inputs)</summary>
+          <pre className="mt-2 text-xs bg-gray-50 p-3 rounded overflow-auto max-h-72">
+            {JSON.stringify(
+              {
                 currentMiles,
                 mpdBlended,
                 carfaxOk: (carfax as any).ok ?? false,
                 dviOk: (dvi as any).ok ?? false,
                 oemCount: oemItems.length,
-                buckets: buckets,
-                counts: counts
-              }, null, 2)}
-            </pre>
-          </div>
+              },
+              null,
+              2
+            )}
+          </pre>
         </details>
       </div>
-    </div>
+    </main>
   );
 }
