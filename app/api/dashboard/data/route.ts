@@ -242,8 +242,12 @@ export async function GET() {
           dviDone: 1
         }
       },
-      // Sort newest first
-      { $sort: { updatedAt: -1 } },
+      // Sort alphabetically by name for stable order
+      { 
+        $sort: { 
+          displayName: 1  // Alphabetical by customer name
+        } 
+      },
       // Limit to a reasonable count
       { $limit: 100 }
     ]).toArray();
