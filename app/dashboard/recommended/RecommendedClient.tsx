@@ -45,15 +45,54 @@ export default function RecommendedClient({
     }
   }, [initialVin]);
 
+  // Check cache first
+  const checkCache = async (vinToCheck: string) => {
+    try {
+      const response = await fetch(`/api/recommended/cache?vin=${encodeURIComponent(vinToCheck)}`);
+      if (response.ok) {
+        const cached = await response.json();
+        if (cached.ok && cached.cached) {
+          return cached;
+        }
+      }
+    } catch (e) {
+      console.warn('Cache check failed:', e);
+    }
+    return null;
+  };
+
+  // Save to cache after successful analysis
+  const saveToCache = async (vinToSave: string, resultToSave: any) => {
+    try {
+      await fetch('/api/recommended/cache', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vin: vinToSave, result: resultToSave }),
+      });
+    } catch (e) {
+      console.warn('Cache save failed:', e);
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!vin.trim()) return;
     
     setIsAnalyzing(true);
     setResult(null);
-    setProgress("Initializing analysis...");
+    setProgress("Checking for cached analysis...");
+
+    // First check cache
+    const cached = await checkCache(vin.trim());
+    if (cached) {
+      setResult(cached);
+      setIsAnalyzing(false);
+      setProgress("");
+      return;
+    }
 
     try {
-      setProgress("Fetching vehicle data...");
+      // Try streaming first
+      setProgress("Connecting to analysis service...");
       
       const response = await fetch('/api/recommended/analyze-stream', {
         method: 'POST',
@@ -62,21 +101,31 @@ export default function RecommendedClient({
       });
 
       if (!response.ok) {
-        throw new Error(`Analysis failed: ${response.statusText}`);
+        throw new Error('Streaming failed, trying direct analysis...');
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        throw new Error('No response stream available');
+        throw new Error('No response stream available, trying direct analysis...');
       }
 
       let buffer = '';
       const decoder = new TextDecoder();
+      let hasData = false;
+      const timeout = setTimeout(() => {
+        if (!hasData) {
+          reader.cancel();
+          throw new Error('Stream timeout, trying direct analysis...');
+        }
+      }, 10000); // 10 second timeout
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
+        hasData = true;
+        clearTimeout(timeout);
+        
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -94,6 +143,8 @@ export default function RecommendedClient({
                 setResult(data.result);
                 setIsAnalyzing(false);
                 setProgress("");
+                // Save to cache
+                await saveToCache(vin.trim(), data.result);
                 return;
               }
               
@@ -108,17 +159,48 @@ export default function RecommendedClient({
       }
 
     } catch (error: any) {
-      console.error('Analysis error:', error);
-      setResult({
-        ok: false,
-        error: error.message || 'Analysis failed'
-      });
-      setIsAnalyzing(false);
-      setProgress("");
+      console.warn('Streaming failed, trying direct API:', error.message);
+      
+      // Fallback to direct API call
+      try {
+        setProgress("Switching to direct analysis mode...");
+        
+        const directResponse = await fetch('/api/recommended/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vin: vin.trim(),
+            model,
+            dviData: { ok: false, error: 'Direct mode' },
+            carfaxData: { ok: false, error: 'Direct mode' },
+            oemData: []
+          }),
+        });
+
+        if (!directResponse.ok) {
+          throw new Error(`Direct analysis failed: ${directResponse.statusText}`);
+        }
+
+        const directResult = await directResponse.json();
+        setResult(directResult);
+        setIsAnalyzing(false);
+        setProgress("");
+        // Save to cache
+        await saveToCache(vin.trim(), directResult);
+
+      } catch (directError: any) {
+        console.error('Both streaming and direct analysis failed:', directError);
+        setResult({
+          ok: false,
+          error: `Analysis failed: ${directError.message}. Please try again or contact support.`
+        });
+        setIsAnalyzing(false);
+        setProgress("");
+      }
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: any) => {
     e.preventDefault();
     handleAnalyze();
   };
@@ -269,7 +351,7 @@ export default function RecommendedClient({
             <input
               type="text"
               value={vin}
-              onChange={(e) => setVin(e.target.value)}
+              onChange={(e: any) => setVin(e.target.value)}
               placeholder="Enter VIN"
               className="w-full border rounded p-2 text-sm"
               required
@@ -281,7 +363,7 @@ export default function RecommendedClient({
             <label className="block text-sm font-medium mb-1">AI Model</label>
             <select 
               value={model} 
-              onChange={(e) => setModel(e.target.value)} 
+              onChange={(e: any) => setModel(e.target.value)} 
               className="w-full border rounded p-2 text-sm"
               disabled={isAnalyzing}
             >
