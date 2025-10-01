@@ -51,6 +51,12 @@ async function getLocalOeFromMongo(vin: string) {
   const db = await getDb();
   const SQUISH = toSquish(vin);
 
+  console.log(`DEBUG: Looking for VIN ${vin}, SQUISH: ${SQUISH}`);
+
+  // First check if any records exist for this squish
+  const count = await db.collection("dataone_us_ldv_ddl").countDocuments({ squish: SQUISH });
+  console.log(`DEBUG: Found ${count} records for squish ${SQUISH}`);
+
   const pipeline = [
     { $match: { squish: SQUISH } },
     { $project: { _id: 0, squish: 1, vin_maintenance_id: 1, maintenance_id: 1 } },
@@ -135,9 +141,11 @@ async function getLocalOeFromMongo(vin: string) {
   ];
 
   const items = await db
-    .collection("dataone_lkp_vin_maintenance")
-    .aggregate(pipeline, { allowDiskUse: true, hint: "squish_1" })
+    .collection("dataone_us_ldv_ddl")
+    .aggregate(pipeline, { allowDiskUse: true })
     .toArray();
+
+  console.log(`DEBUG: Pipeline returned ${items.length} items`);
 
   return { ok: true as const, vin, squish: SQUISH, count: items.length, items };
 }
