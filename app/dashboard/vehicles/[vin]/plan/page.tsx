@@ -9,6 +9,7 @@ import {
   resolveCarfaxConfig, 
   fetchCarfaxWithCache 
 } from "@/lib/integrations/carfax";
+import ModernPlanUI from "./ModernPlanUI";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -501,7 +502,6 @@ export default async function VehiclePlanPage({ params }: PageProps) {
             {/* Action Buttons */}
             <div className="flex items-center gap-3">
               <button
-                onClick={() => window.print()}
                 className="px-3 py-1.5 text-sm border border-gray-300 bg-white hover:bg-gray-50 rounded-md font-medium"
               >
                 🖨️ Print Plan
